@@ -164,11 +164,11 @@ class Runner:
                         (status, sev, self.clock.iso(), dur, db.dumps(data["input"]), db.dumps(data["output"]),
                          data["message"], self.run_id, n))
             db.audit(con, actor_type="ai" if n == 2 and self.ctx.get("extractor") == "llm" else "system",
-                     actor_id=config.LLM_MODEL if n == 2 and self.ctx.get("extractor") == "llm" else "Ledgerlight pipeline",
+                     actor_id=config.llm_model() if n == 2 and self.ctx.get("extractor") == "llm" else "Ledgerlight pipeline",
                      event_type="stage_completed", object_type="invoice", object_id=self.inv["id"], run_id=self.run_id,
                      invoice_id=self.inv["id"], summary=f"Stage {n} {STAGE_NAME[n]}: {data['message']}", outcome=sev,
                      payload={"stage_no": n, "status": status, "duration_ms": dur, "work_ms": work_ms,
-                              **({"model": config.LLM_MODEL, "prompt_version": config.PROMPT_VERSION}
+                              **({"model": config.llm_model(), "prompt_version": config.PROMPT_VERSION}
                                  if n == 2 and self.ctx.get("extractor") == "llm" else {})},
                      ts=self.clock.iso())
         self.em.emit("stage_completed", data)
@@ -274,7 +274,8 @@ class Runner:
     def s2_extract(self):
         info = self.info
         stored = db.loads(self.inv.get("extraction"))
-        llm = config.llm_available() and not self.force_text
+        # AI reads image-only scans whenever a key is set; text PDFs too only in LEDGERLIGHT_EXTRACTION=llm mode.
+        llm = config.llm_available() and not self.force_text and             (info["text_source"] == "none" or config.llm_reads_text_pdfs())
         extraction = None
         if stored and self.run_row.get("use_cache") and stored.get("_sha") == self.inv["file_sha256"] and \
                 (stored.get("extractor") == "llm" or not llm):
@@ -284,16 +285,16 @@ class Runner:
             self.ctx["extraction_status"] = "unavailable"
             self.ctx["extractor"] = "none"
             self.log(2, "fail", "This is an image-only scan and no AI key is configured: scanned invoice needs AI "
-                                "extraction; set ANTHROPIC_API_KEY.")
+                                "extraction; set ANTHROPIC_API_KEY or GROQ_API_KEY.")
             with db.tx() as con:
                 con.execute("UPDATE runs SET extraction_mode='unavailable' WHERE id=?", (self.run_id,))
-            return {"status": "skipped", "message": "Skipped: scanned invoice needs AI extraction; set ANTHROPIC_API_KEY.",
+            return {"status": "skipped", "message": "Skipped: scanned invoice needs AI extraction; set ANTHROPIC_API_KEY or GROQ_API_KEY.",
                     "output": {"extractor": None, "reason": "scanned_no_key"}}
         elif llm:
             from . import extract_llm  # noqa: PLC0415
             scanned = info["doc_type"] == "scanned"
             self.log(2, "info", f"Reading the {'page image' if scanned else 'PDF'} with the vision model "
-                                f"({config.LLM_MODEL}{', saved result if available' if self.run_row.get('use_cache') else ''})")
+                                f"({config.llm_provider()} {config.llm_model()}{', saved result if available' if self.run_row.get('use_cache') else ''})")
             try:
                 extraction = extract_llm.extract(self.data, self.inv["file_sha256"], scanned=scanned,
                                                  text_hint=info.get("text", ""), use_cache=bool(self.run_row.get("use_cache")))
@@ -457,7 +458,7 @@ class Runner:
                 vendors = matching.load_vendors(con)
             self.log(4, "info", f"Matching vendor against the master list ({len(vendors)} vendors)")
             vm = matching.match_vendor(vendors, c["fields"]["vendor_name"]["value"], c["vendor_gstin"],
-                                       self.cfg["advanced"]["fuzzy_vendor"])
+                                       self.cfg["advanced"]["fuzzy_vendor"], scanned=self.info["doc_type"] == "scanned")
             self.ctx["vendor_match"] = vm
             v = vm["vendor"]
             if v:

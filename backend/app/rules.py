@@ -77,11 +77,11 @@ def unit_noun(desc: str | None, uom: str | None, n: float | None = 2) -> str:
 def r01(ctx) -> dict:
     status = ctx["extraction_status"]
     if status == "unavailable":
-        msg = ("We could not read this file: scanned invoice needs AI extraction; set ANTHROPIC_API_KEY. "
+        msg = ("We could not read this file: scanned invoice needs AI extraction; set ANTHROPIC_API_KEY or GROQ_API_KEY. "
                "It is an image with no text layer, so the AI vision model is needed to read it.")
         return rr("R01", "hold", msg, facts={"reason": "scanned_no_key"},
-                  headline="scanned invoice needs AI extraction; set ANTHROPIC_API_KEY.",
-                  next_step="Set ANTHROPIC_API_KEY on the server and re-run this invoice, or ask the vendor for a "
+                  headline="scanned invoice needs AI extraction; set ANTHROPIC_API_KEY or GROQ_API_KEY.",
+                  next_step="Set ANTHROPIC_API_KEY or GROQ_API_KEY on the server and re-run this invoice, or ask the vendor for a "
                             "text PDF of the same invoice.")
     if status == "not_invoice":
         return rr("R01", "hold", "This file does not look like an invoice: no invoice number, date or total was found.",
@@ -208,6 +208,15 @@ def r04(ctx) -> dict:
         return rr("R04", "review", f"Looks like {v['name']} (name match {vm['score']:.2f}), but {why}. Please confirm.",
                   facts=facts, exposure=total, headline=f"the vendor looks like {short} but we could not confirm it.",
                   next_step="Confirm the vendor with Procurement, then accept or override.")
+    mis = vm.get("gstin_misread")
+    if mis:
+        facts["gstin_misread"] = mis
+        return rr("R04", "note", f"{v['name']} matched by exact name. The GSTIN read from the scan "
+                                 f"({c.get('vendor_gstin')}) differs from the one on file ({v['gstin']}) only in "
+                                 f"character {mis['position']} ('{mis['read']}' vs '{mis['master']}'), a common scanning "
+                                 f"misread, so we used the GSTIN on file.", facts=facts, exposure=total,
+                  headline=f"the vendor is {short}; one smudged character of its GSTIN was misread on the scan.",
+                  next_step="No action needed unless the vendor's GSTIN has actually changed.")
     how = f"matched by GSTIN {v['gstin']}" if vm["method"] == "gstin" else "matched by name"
     return rr("R04", "pass", f"{v['name']} is an approved vendor ({how}).", facts=facts, ok=f"Vendor approved ({how})")
 

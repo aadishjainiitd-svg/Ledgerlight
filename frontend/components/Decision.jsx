@@ -129,7 +129,7 @@ function FieldsPanel({ d, onEdit }) {
   if (!fields.length) {
     return (
       <div className="card panel" data-testid="fields-panel"><h3><Ic n="list" c="sm" />Extracted data</h3>
-        <div className="notice-scan"><Ic n="pause-circle" c="lg" /><div><b>Nothing could be read from this document</b><p>{d.invoice.doc_type === 'scanned' ? 'It is an image-only scan and no AI key is set on this server, so the invoice was held rather than guessed at. Set ANTHROPIC_API_KEY and re-run, or ask the vendor for a text PDF.' : 'No fields were found in the file.'}</p></div></div>
+        <div className="notice-scan"><Ic n="pause-circle" c="lg" /><div><b>Nothing could be read from this document</b><p>{d.invoice.doc_type === 'scanned' ? 'It is an image-only scan and no AI key is set on this server, so the invoice was held rather than guessed at. Set GROQ_API_KEY or ANTHROPIC_API_KEY in backend/.env, restart and re-run, or ask the vendor for a text PDF.' : 'No fields were found in the file.'}</p></div></div>
       </div>
     );
   }

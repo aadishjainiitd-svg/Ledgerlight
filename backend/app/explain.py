@@ -179,7 +179,7 @@ def _short_reason(lead, decision, rules, ctx) -> str:
             r = max(rows, key=lambda x: abs(x["delta_paise"]))
             return f"Billed {abs(r['delta_pct']):.1f}% above the PO ({inr0(r['delta_paise'])}), inside the allowed 2%."
     if rid == "R01":
-        return "Scanned invoice needs AI extraction; set ANTHROPIC_API_KEY." if lead["facts"].get("reason") == "scanned_no_key" else lead["message"]
+        return "Scanned invoice needs AI extraction; set ANTHROPIC_API_KEY or GROQ_API_KEY." if lead["facts"].get("reason") == "scanned_no_key" else lead["message"]
     return lead["message"]
 
 

@@ -1,15 +1,23 @@
-"""Vision-LLM extraction with Claude (only when ANTHROPIC_API_KEY is set) and optional wording polish.
+"""Vision-LLM extraction and optional wording polish, via Claude (ANTHROPIC_API_KEY) or Groq (GROQ_API_KEY).
 
 The model reads the invoice and returns strict JSON with a confidence per field. It never decides
-anything: the deterministic rules do. The key is read by the SDK from the environment and is never
-logged or stored. Invoice text is treated as data, never as instructions."""
+anything: the deterministic rules do. Keys are read from the environment at call time and are never
+logged or stored. Invoice text is treated as data, never as instructions.
+
+Callers build Anthropic-style content blocks (document / image / text). For Groq, _call translates them to
+the OpenAI-compatible format: a PDF document block becomes rendered page images, and the JSON schema is
+stated in the system prompt with JSON mode on (the result is still validated by _validate)."""
 from __future__ import annotations
 
 import base64
 import hashlib
 import json
 import logging
+import os
 import re
+import time
+
+import pymupdf
 
 from . import config, db, pdfio
 
@@ -89,12 +97,127 @@ def _client():
 
 
 def _call(content: list, system: str, schema: dict | None, max_tokens: int = 16000) -> str:
+    """Send one request to the configured provider and return the model's text (JSON when schema is given)."""
+    provider = config.llm_provider()
+    if provider == "groq":
+        # The optional wording polish never waits on a rate limit: the template text is used instead.
+        return _call_groq(content, system, schema, max_tokens, attempts=1 if schema is POLISH_SCHEMA else 3)
+    if provider == "anthropic":
+        return _call_anthropic(content, system, schema, max_tokens)
+    raise ExtractionError(f"No AI key is configured ({config.NO_KEY_HINT}).")
+
+
+# ------------------------------------------------------------------ Groq (OpenAI-compatible)
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MAX_IMAGES = 5          # Groq accepts at most 5 images per request
+GROQ_MAX_TOKENS = 8000
+
+
+def _b64_png(png: bytes) -> dict:
+    return {"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.standard_b64encode(png).decode()}}
+
+
+def _to_openai_parts(content: list) -> list:
+    parts = []
+    for block in content:
+        kind = block.get("type")
+        if kind == "text":
+            parts.append({"type": "text", "text": block["text"]})
+        elif kind == "image":
+            parts.append({"type": "image_url",
+                          "image_url": {"url": f"data:{block['source']['media_type']};base64,{block['source']['data']}"}})
+        elif kind == "document":
+            data = base64.standard_b64decode(block["source"]["data"])
+            with pymupdf.open(stream=data, filetype="pdf") as doc:
+                n = min(doc.page_count, GROQ_MAX_IMAGES)
+            for i in range(n):
+                parts.append(_b64_png(pdfio.render_png(data, i, dpi=150)))
+        else:
+            raise ExtractionError(f"Unsupported content block for Groq: {kind}")
+    return parts
+
+
+def _strip_reasoning(text: str) -> str:
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text).strip()
+    return text
+
+
+def _retry_wait(r, attempt: int) -> float:
+    """Seconds to wait before retrying a rate-limited or failed Groq call (honours retry-after, capped)."""
+    try:
+        wait = float(r.headers.get("retry-after", ""))
+    except ValueError:
+        m = re.search(r"try again in ([\d.]+)s", r.text)
+        wait = float(m.group(1)) if m else 2.0 * (attempt + 1)
+    return min(max(wait, 0.5), 30.0) + 0.25
+
+
+def _compact_schema(node):
+    """A shorter, equivalent schema for the prompt (Groq's free tier is limited by input tokens per minute)."""
+    if isinstance(node, dict):
+        any_of = node.get("anyOf")
+        if any_of and all(isinstance(x, dict) and set(x) == {"type"} for x in any_of):
+            return {"type": [x["type"] for x in any_of]}
+        return {k: _compact_schema(v) for k, v in node.items() if k not in ("additionalProperties", "required")}
+    if isinstance(node, list):
+        return [_compact_schema(x) for x in node]
+    return node
+
+
+def _call_groq(content: list, system: str, schema: dict | None, max_tokens: int, attempts: int = 3) -> str:
+    import httpx  # noqa: PLC0415
+    sys_text = system
+    if schema is not None:
+        sys_text += ("\n\nAnswer with one JSON object only, no prose. Include every key in this JSON schema "
+                     "(use null where the schema allows it):\n"
+                     + json.dumps(_compact_schema(schema), separators=(",", ":")))
+    body = {"model": config.llm_model(), "temperature": 0, "max_tokens": min(max_tokens, GROQ_MAX_TOKENS),
+            "messages": [{"role": "system", "content": sys_text},
+                         {"role": "user", "content": _to_openai_parts(content)}]}
+    if schema is not None:
+        body["response_format"] = {"type": "json_object"}
+    headers = {"Authorization": "Bearer " + os.environ.get("GROQ_API_KEY", "").strip()}
+    last = None
+    for attempt in range(attempts):
+        try:
+            r = httpx.post(GROQ_URL, json=body, headers=headers, timeout=120.0)
+        except httpx.HTTPError as e:
+            last = f"network error ({type(e).__name__})"
+            continue
+        if r.status_code == 200:
+            break
+        try:
+            detail = r.json().get("error", {}).get("message", "")[:200]
+        except ValueError:
+            detail = ""
+        last = f"HTTP {r.status_code}{': ' + detail if detail else ''}"
+        if r.status_code not in (429, 500, 502, 503, 504):
+            break
+        if attempt < attempts - 1:
+            time.sleep(_retry_wait(r, attempt))
+    else:
+        raise ExtractionError(f"The Groq API could not be reached ({last}).")
+    if r.status_code != 200:
+        raise ExtractionError(f"The Groq API returned an error ({last}).")
+    choice = (r.json().get("choices") or [{}])[0]
+    if choice.get("finish_reason") == "length":
+        raise ExtractionError("The AI model's answer was cut off.")
+    text = _strip_reasoning((choice.get("message") or {}).get("content") or "")
+    if not text:
+        raise ExtractionError("The AI model returned no text.")
+    return text
+
+
+# ------------------------------------------------------------------ Anthropic
+def _call_anthropic(content: list, system: str, schema: dict | None, max_tokens: int = 16000) -> str:
     import anthropic  # noqa: PLC0415
     client = _client()
     output_config: dict = {"effort": "medium"}
     if schema is not None:
         output_config["format"] = {"type": "json_schema", "schema": schema}
-    kwargs = dict(model=config.LLM_MODEL, max_tokens=max_tokens, system=system,
+    kwargs = dict(model=config.llm_model(), max_tokens=max_tokens, system=system,
                   messages=[{"role": "user", "content": content}], output_config=output_config)
     try:
         # Server-side refusal fallback (routes a policy decline to a fallback model in the same call).
@@ -151,12 +274,27 @@ def _extract_once(content_doc: dict, text_hint: str, reverse: bool) -> dict:
     raise ExtractionError(f"The AI model returned invalid data twice ({last_err}).")
 
 
+_CURRENCY_ALIASES = {"INR": "INR", "RS": "INR", "RS.": "INR", "₹": "INR", "RUPEES": "INR", "RUPEE": "INR",
+                     "USD": "USD", "$": "USD", "US$": "USD", "EUR": "EUR", "€": "EUR", "GBP": "GBP", "£": "GBP"}
+
+
+def _canon_currency(d: dict) -> dict:
+    """Map printed currency forms (Rs., ₹, Rupees) to an ISO code. raw_text keeps what was printed."""
+    f = d.get("currency")
+    if isinstance(f, dict) and f.get("value"):
+        key = re.sub(r"\s+", "", str(f["value"]).upper().replace("TOTAL", ""))
+        code = _CURRENCY_ALIASES.get(key) or _CURRENCY_ALIASES.get(key.rstrip("."))
+        if code:
+            f["value"] = code
+    return d
+
+
 def _norm(v) -> str:
     return re.sub(r"[^A-Z0-9]", "", str(v or "").upper())
 
 
 def cache_key(sha: str, mode: str) -> str:
-    return hashlib.sha256(f"{sha}|{config.PROMPT_VERSION}|{config.LLM_MODEL}|{mode}".encode()).hexdigest()
+    return hashlib.sha256(f"{sha}|{config.PROMPT_VERSION}|{config.llm_model()}|{mode}".encode()).hexdigest()
 
 
 def extract(data: bytes, sha: str, *, scanned: bool, text_hint: str, use_cache: bool = True) -> dict:
@@ -172,13 +310,13 @@ def extract(data: bytes, sha: str, *, scanned: bool, text_hint: str, use_cache: 
             return d
     pdf_block = {"type": "document", "source": {"type": "base64", "media_type": "application/pdf",
                                                  "data": base64.standard_b64encode(data).decode()}}
-    first = _extract_once(pdf_block, text_hint, reverse=False)
+    first = _canon_currency(_extract_once(pdf_block, text_hint, reverse=False))
     agreement = None
     if scanned:
         png = pdfio.render_png(data, 0, dpi=150)
         img_block = {"type": "image", "source": {"type": "base64", "media_type": "image/png",
                                                   "data": base64.standard_b64encode(png).decode()}}
-        second = _extract_once(img_block, text_hint, reverse=True)
+        second = _canon_currency(_extract_once(img_block, text_hint, reverse=True))
         agreement = {}
         for f in FIELD_NAMES:
             a, b = first[f].get("value"), second[f].get("value")
@@ -189,7 +327,7 @@ def extract(data: bytes, sha: str, *, scanned: bool, text_hint: str, use_cache: 
     out = {
         "extractor": "llm",
         "extractor_version": config.PROMPT_VERSION,
-        "model": config.LLM_MODEL,
+        "model": config.llm_model(),
         "text_source": "image" if scanned else "text_layer",
         "fields": {f: first[f] for f in FIELD_NAMES},
         "line_items": first["line_items"],
@@ -212,7 +350,7 @@ def extract(data: bytes, sha: str, *, scanned: bool, text_hint: str, use_cache: 
         out["tax_rate_pct"] = sum(rates) if any("CGST" in x for x in labels) and any("SGST" in x for x in labels) else rates[0]
     with db.tx() as con:
         con.execute("INSERT OR REPLACE INTO extraction_cache (cache_key, file_sha256, prompt_version, model, result, "
-                    "created_at) VALUES (?,?,?,?,?,?)", (key, sha, config.PROMPT_VERSION, config.LLM_MODEL,
+                    "created_at) VALUES (?,?,?,?,?,?)", (key, sha, config.PROMPT_VERSION, config.llm_model(),
                                                          json.dumps(out), db.now_iso()))
     out["cached"] = False
     return out

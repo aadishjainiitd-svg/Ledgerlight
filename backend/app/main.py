@@ -38,8 +38,11 @@ async def lifespan(app: FastAPI):
     with db.tx() as con:
         for r in con.execute("SELECT id FROM runs WHERE status IN ('queued','running')").fetchall():
             con.execute("UPDATE runs SET status='failed', error='Server restarted during the run' WHERE id=?", (r["id"],))
-    log.info("Ledgerlight ready. Extraction mode: %s", "Claude vision (%s)" % config.LLM_MODEL if config.llm_available()
-             else "deterministic text parser (no ANTHROPIC_API_KEY)")
+    if config.llm_available():
+        log.info("Ledgerlight ready. AI extraction: %s %s (reads %s)", config.llm_provider(), config.llm_model(),
+                 "every invoice" if config.llm_reads_text_pdfs() else "image-only scans; text PDFs use the parser")
+    else:
+        log.info("Ledgerlight ready. Extraction: deterministic text parser (no AI key set)")
     yield
 
 
@@ -76,7 +79,8 @@ def health():
     with db.conn() as con:
         n = con.execute("SELECT COUNT(*) AS n FROM runs").fetchone()["n"]
     return {"ok": True, "version": app.version, "extraction_mode": "llm" if config.llm_available() else "text-only",
-            "llm_model": config.LLM_MODEL if config.llm_available() else None,
+            "llm_model": config.llm_model(), "llm_provider": config.llm_provider(),
+            "ai_reads": ("all" if config.llm_reads_text_pdfs() else "scans") if config.llm_available() else None,
             "scanned_pdfs_supported": config.llm_available(), "as_of": config.AS_OF or None, "runs": n,
             "default_pace": config.DEFAULT_PACE, "pace_presets": config.PACE_PRESETS}
 

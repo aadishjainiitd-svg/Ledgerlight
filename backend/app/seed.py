@@ -199,7 +199,7 @@ def seed_synthetic(data: dict) -> int:
                         "duration_ms, pace, pace_ms, use_cache, config_version, model_name, prompt_version, extraction_mode, "
                         "triggered_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (run_id, iid, "seed", "completed", 9, _iso(start), _iso(decided), dur, "normal", 0, 1, 14,
-                         config.LLM_MODEL, config.PROMPT_VERSION, "seed", "system", _iso(start)))
+                         config.DEFAULT_MODELS["anthropic"], config.PROMPT_VERSION, "seed", "system", _iso(start)))
             sev = SEV_OF.get(s["outcome"])
             for r in RULES:
                 rid = r["id"]

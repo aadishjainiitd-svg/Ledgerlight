@@ -130,6 +130,24 @@ def test_r04_fuzzy_only_reviews():
     assert R.r04(c)["severity"] == "review"
 
 
+def test_r04_one_char_gstin_misread_on_scan_is_a_note():
+    from app import matching
+    vendors = [{"id": "V-104", "name": "Greenleaf Pantry Supplies", "gstin": "27AAJFG9054R1Z2", "aliases": []}]
+    # scan: 'G' read as '0' (OCR-confusable) -> likely misread, not a conflict
+    vm = matching.match_vendor(vendors, "GREENLEAF PANTRY SUPPLIES", "27AAJF09054R1Z2", scanned=True)
+    assert vm["method"] == "name" and not vm["gstin_conflict"] and vm["gstin_misread"]["position"] == 7
+    c = make_ctx()
+    c["vendor_match"] = {**vm, "vendor": {**c["vendor_match"]["vendor"], "gstin": "27AAJFG9054R1Z2"}}
+    c["canon"]["vendor_gstin"] = "27AAJF09054R1Z2"
+    r = R.r04(c)
+    assert r["severity"] == "note" and "character 7" in r["message"]
+    # the same difference on a text PDF stays a conflict
+    assert matching.match_vendor(vendors, "Greenleaf Pantry Supplies", "27AAJF09054R1Z2")["gstin_conflict"]
+    # a non-confusable difference (G vs X) or two differences stays a conflict even on a scan
+    assert matching.match_vendor(vendors, "Greenleaf Pantry Supplies", "27AAJFX9054R1Z2", scanned=True)["gstin_conflict"]
+    assert matching.match_vendor(vendors, "Greenleaf Pantry Supplies", "27AAJF09054R1Z3", scanned=True)["gstin_conflict"]
+
+
 def test_r04_pending_holds_and_blocked_rejects():
     c = make_ctx()
     c["vendor_match"]["vendor"]["status"] = "pending"

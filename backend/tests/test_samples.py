@@ -12,8 +12,8 @@ EXPECTED = json.loads((config.SAMPLES_DIR / "expected.json").read_text(encoding=
 @pytest.mark.parametrize("sample", EXPECTED, ids=[s["id"] for s in EXPECTED])
 def test_sample_decision(sample, fresh_db):
     if sample["requires_llm"] and not config.llm_available():
-        pytest.skip(f"{sample['id']} is an image-only scan: it needs Claude vision extraction and ANTHROPIC_API_KEY "
-                    f"is not set (see test_scan_without_key_is_held)")
+        pytest.skip(f"{sample['id']} is an image-only scan: the offline suite has no AI key "
+                    f"(see test_scan_without_key_is_held and the live test in test_live_ai.py)")
     out = run_sample(sample["id"])
     assert out["run"]["status"] == "completed", out["run"]
     d = out["decision"]
@@ -67,6 +67,7 @@ def test_si06_ec4_bank_change(fresh_db):
 def test_scan_without_key_is_held(fresh_db, monkeypatch):
     """EC3 without a key: the image-only scan must not crash; it is held with a plain-English reason."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
     out = run_sample("SI-05")
     assert out["run"]["status"] == "completed"
     d = out["decision"]

@@ -24,9 +24,30 @@ def _norm_name(s: str | None) -> str:
     return " ".join("".join(ch if ch.isalnum() else " " for ch in s).split())
 
 
-def match_vendor(vendors: list[dict], name: str | None, gstin: str | None, fuzzy_min: float = 0.85) -> dict:
-    """Match order: exact GSTIN (decisive), exact normalised name or alias, fuzzy token-set >= 0.85."""
-    res = {"vendor": None, "method": "none", "score": 0.0, "gstin_conflict": False, "candidates": []}
+# Character pairs that scanners and vision models commonly confuse in printed IDs.
+OCR_CONFUSABLE = {frozenset(p) for p in ("0O", "0G", "0D", "0Q", "1I", "1L", "5S", "8B", "2Z", "6G")}
+
+
+def gstin_one_char_misread(read: str | None, master: str | None) -> dict | None:
+    """The read GSTIN differs from the master in exactly one position, by an OCR-confusable pair."""
+    a, b = (read or "").upper(), (master or "").upper()
+    if len(a) != 15 or len(b) != 15:
+        return None
+    diffs = [(i, x, y) for i, (x, y) in enumerate(zip(a, b)) if x != y]
+    if len(diffs) == 1 and frozenset(diffs[0][1:]) in OCR_CONFUSABLE:
+        i, x, y = diffs[0]
+        return {"position": i + 1, "read": x, "master": y}
+    return None
+
+
+def match_vendor(vendors: list[dict], name: str | None, gstin: str | None, fuzzy_min: float = 0.85,
+                 scanned: bool = False) -> dict:
+    """Match order: exact GSTIN (decisive), exact normalised name or alias, fuzzy token-set >= 0.85.
+
+    On a scanned document only, an exact name match whose GSTIN is one OCR-confusable character away from the
+    master's is reported as a likely misread (gstin_misread) instead of a conflict."""
+    res = {"vendor": None, "method": "none", "score": 0.0, "gstin_conflict": False, "gstin_misread": None,
+           "candidates": []}
     if gstin:
         for v in vendors:
             if v.get("gstin") and v["gstin"].upper() == gstin.upper():
@@ -37,8 +58,10 @@ def match_vendor(vendors: list[dict], name: str | None, gstin: str | None, fuzzy
     for v in vendors:
         names = [v["name"], v.get("short") or ""] + list(v.get("aliases") or [])
         if any(_norm_name(x) == nn for x in names if x):
+            conflict = bool(gstin and v.get("gstin") and gstin.upper() != v["gstin"].upper())
+            misread = gstin_one_char_misread(gstin, v.get("gstin")) if conflict and scanned else None
             return {**res, "vendor": v, "method": "name", "score": 1.0,
-                    "gstin_conflict": bool(gstin and v.get("gstin") and gstin != v["gstin"])}
+                    "gstin_conflict": conflict and not misread, "gstin_misread": misread}
     scored = []
     for v in vendors:
         names = [v["name"]] + list(v.get("aliases") or [])

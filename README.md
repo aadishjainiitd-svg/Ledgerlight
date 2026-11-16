@@ -34,18 +34,34 @@ macOS/Linux: use `.venv/bin/python` instead of `.venv\Scripts\python`.
 - Reset any time: `POST /api/demo/reset`. Running the same sample file twice is (correctly) rejected as an exact
   duplicate, so reset between demo takes.
 
-### Optional: AI extraction with Claude
+### Optional: AI extraction (Groq or Claude)
+
+Put one key in `backend/.env` (git-ignored; copy `backend/.env.example`), or set it in the shell, which wins:
 
 ```powershell
-$env:ANTHROPIC_API_KEY = "<your key>"     # never commit it; the app never logs or stores it
+# backend/.env
+GROQ_API_KEY=<your key>          # Groq, model qwen/qwen3.8-27b (vision)
+# ANTHROPIC_API_KEY=<your key>   # Claude, model claude-sonnet-5-5 (used instead of Groq when both are set)
 ```
 
-| | With `ANTHROPIC_API_KEY` | Without a key |
-|---|---|---|
-| Text PDFs (SI-01, 02, 03, 06, 07) | Claude (`claude-sonnet-5-5`) reads the PDF with structured JSON output and per-field confidence; the text layer is passed as a hint | A deterministic, layout-agnostic text-layer parser |
-| Scan with OCR layer (SI-04) | Claude reads the image (two passes) | Parser reads the embedded OCR layer |
-| Image-only scan (SI-05) | Claude reads the image twice (self-consistency) | **Hold**: "scanned invoice needs AI extraction; set ANTHROPIC_API_KEY" |
-| Explanation wording | Claude may polish the template text; any new number or ID is rejected and the template is kept | Template text |
+The app never logs or stores keys. Which invoices the AI reads is set by `LEDGERLIGHT_EXTRACTION`:
+
+| | `auto` (default) | `llm` | No key |
+|---|---|---|---|
+| Text PDFs (SI-01, 02, 03, 06, 07) | Deterministic text-layer parser | AI reads the PDF (text layer passed as a hint) | Parser |
+| Scan with OCR layer (SI-04) | Parser reads the OCR layer | AI reads the image (two passes) | Parser |
+| Image-only scan (SI-05) | AI reads the image twice (self-consistency) | Same | **Hold**: "scanned invoice needs AI extraction" |
+| Explanation wording | AI may polish the template; any new number or ID is rejected | Same | Template text |
+
+`auto` keeps the tested parser where the PDF already has reliable text and uses AI only where there is nothing
+else to read. Groq notes: page images are sent (Groq takes images, not PDFs, at most 5 pages); the free tier
+allows about 7,000 input tokens per minute and one scan uses about 6,000 over two passes, so back-to-back scan
+runs may pause while the client waits out the rate limit (it honours `retry-after`). The wording polish never
+waits; it falls back to the template.
+
+On a scan, an exact vendor-name match whose GSTIN differs from the master in one OCR-confusable character
+(0/G, 0/O, 1/I, 5/S, 8/B, 2/Z) is treated as a misread and gives a note (R04), not a review. Any other GSTIN
+difference still goes to review.
 
 The model is only used to read the invoice and to word the explanation. Every decision is made by the rules.
 Results are cached per (file hash, prompt version, model) so repeated demo runs are identical. Other settings:
@@ -61,8 +77,14 @@ cd backend
 .venv\Scripts\python scripts\check_sse.py         # with the server running: upload SI-01 over HTTP, print the SSE sequence
 ```
 
-Without a key, the SI-05 golden test is skipped (it needs vision); `test_scan_without_key_is_held` checks the Hold,
-and `test_llm_path.py` drives the real Claude code path for SI-05 with a simulated model response (no network).
+The main suite is offline: it ignores `backend/.env` and removes AI keys, so the SI-05 golden test is skipped
+there; `test_scan_without_key_is_held` checks the Hold, and `test_llm_path.py` drives the real extraction code for
+SI-05 with a simulated model response plus the Groq request format (no network). `tests/test_live_ai.py` runs SI-05
+against the real API for each provider whose key is set (shell or `backend/.env`) and skips the rest:
+
+```powershell
+.venv\Scripts\python -m pytest -q tests\test_live_ai.py -rs   # about a minute on Groq's free tier
+```
 
 ### Regenerating the sample PDFs
 

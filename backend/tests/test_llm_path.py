@@ -64,3 +64,55 @@ def test_polish_fact_check_rejects_new_numbers():
           "next_step": "Please ask Meridian."}
     bad = dict(ok, attention=["The GST ought to be ₹31,230."])
     assert explain.fact_check(base, ok) and not explain.fact_check(base, bad)
+
+
+def test_groq_request_translation_offline(monkeypatch):
+    """Groq path without network: a PDF document block becomes page images, the compact schema goes in the
+    system prompt with JSON mode, and the key is sent only as a bearer header."""
+    import base64
+    from app import config, pdfio
+
+    sent = {}
+
+    class Resp:
+        status_code = 200
+        headers = {}
+        text = ""
+
+        @staticmethod
+        def json():
+            return {"choices": [{"finish_reason": "stop", "message": {"content": "<think>x</think>{\"ok\": true}"}}]}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        sent.update(url=url, body=json, headers=headers)
+        return Resp()
+
+    import httpx
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("GROQ_API_KEY", "test-not-a-real-key")
+    assert config.llm_provider() == "groq" and config.llm_model() == "qwen/qwen3.8-27b"
+
+    data = (config.SAMPLES_DIR / "SI-01_bluepeak_BPS-2026-0417.pdf").read_bytes() \
+        if (config.SAMPLES_DIR / "SI-01_bluepeak_BPS-2026-0417.pdf").exists() else \
+        next(config.SAMPLES_DIR.glob("SI-01*.pdf")).read_bytes()
+    doc = {"type": "document", "source": {"type": "base64", "media_type": "application/pdf",
+                                          "data": base64.standard_b64encode(data).decode()}}
+    out = extract_llm._call([doc, {"type": "text", "text": "read it"}], "sys", extract_llm.SCHEMA)
+    assert out == '{"ok": true}'                                  # reasoning block stripped
+    parts = sent["body"]["messages"][1]["content"]
+    assert parts[0]["type"] == "image_url" and parts[0]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert parts[-1] == {"type": "text", "text": "read it"}
+    assert sent["body"]["response_format"] == {"type": "json_object"}
+    assert "additionalProperties" not in sent["body"]["messages"][0]["content"]
+    assert sent["headers"]["Authorization"] == "Bearer test-not-a-real-key"
+    assert sent["url"].startswith("https://api.groq.com/")
+    assert len(pdfio.render_png(data, 0, dpi=72)) > 0
+
+
+def test_currency_forms_are_canonicalised_before_agreement():
+    for printed in ("Rs.", "Rs", "₹", "Rupees", "TOTAL Rs.", "INR"):
+        d = extract_llm._canon_currency({"currency": {"value": printed, "raw_text": printed, "confidence": 0.9}})
+        assert d["currency"]["value"] == "INR" and d["currency"]["raw_text"] == printed
+    d = extract_llm._canon_currency({"currency": {"value": "XYZ", "raw_text": "XYZ", "confidence": 0.9}})
+    assert d["currency"]["value"] == "XYZ"

@@ -14,6 +14,14 @@ os.environ["LEDGERLIGHT_PACE"] = "instant"
 os.environ.setdefault("LEDGERLIGHT_AS_OF", "2026-11-16")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# The main suite is offline and deterministic: AI keys are removed and backend/.env is not loaded.
+# Keys from the shell or backend/.env are kept aside for the opt-in live tests (tests/test_live_ai.py).
+os.environ["LEDGERLIGHT_DOTENV"] = "0"
+from app.config import load_dotenv  # noqa: E402
+
+_DOTENV = load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+LIVE_KEYS = {k: (os.environ.pop(k, "") or _DOTENV.get(k, "")).strip() for k in ("ANTHROPIC_API_KEY", "GROQ_API_KEY")}
+
 from app import config, db, pipeline, seed, services  # noqa: E402
 
 

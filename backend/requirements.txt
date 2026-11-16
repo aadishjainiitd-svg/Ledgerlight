@@ -5,9 +5,9 @@ python-multipart==0.0.33
 pymupdf==2.1
 rapidfuzz==3.14.6
 anthropic==2.8.0
+httpx==0.28.1            # also the Groq client (OpenAI-compatible REST)
 # tests and the HTTP check script
 pytest==9.2.0
-httpx==0.28.1
 # sample PDF generator (samples/make_samples.py)
 reportlab==5.1.0
 pillow==13.0.0
