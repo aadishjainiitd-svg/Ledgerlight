@@ -1,0 +1,66 @@
+"""The Claude extraction path, exercised without a network call.
+
+The real extractor (app.extract_llm) is used end to end: request building, two-pass self-consistency for scans,
+schema validation, caching, effective confidence, implied PO and the explanation polish fact-check. Only the
+HTTP call (_call) is replaced by a test double that returns what a vision model would read from the SI-05 scan,
+so the EC3 decision logic is verified even when ANTHROPIC_API_KEY is not set. Product code never looks at
+file names."""
+import json
+
+from app import explain, extract_llm
+from tests.conftest import run_sample
+
+
+def F(value, conf, raw=None):
+    return {"value": value, "raw_text": raw if raw is not None else value, "confidence": conf}
+
+
+GREENLEAF_READ = {
+    "vendor_name": F("Greenleaf Pantry Supplies", 0.95), "vendor_gstin": F("27AAJFG9054R1Z2", 0.93),
+    "invoice_no": F("GL-2291", 0.90), "invoice_date": F("12/11/26", 0.90), "po_reference": F(None, 0.0),
+    "currency": F("INR", 0.90, "Rs."), "subtotal": F("75,000", 0.83), "tax_total": F("3,750", 0.81, "1,875 + 1,875"),
+    "total": F("78,750", 0.78, "78,7?0"), "bank_name": F(None, 0.0), "bank_account": F(None, 0.0), "bank_ifsc": F(None, 0.0),
+    "line_items": [
+        {"description": "Tea premix (masala)", "item_code": None, "qty": "150 kg", "uom": "kg", "unit_price": "420",
+         "amount": "63,000", "tax_rate_pct": None, "confidence": 0.9},
+        {"description": "Sugar", "item_code": None, "qty": "250 kg", "uom": "kg", "unit_price": "48", "amount": "12,000",
+         "tax_rate_pct": None, "confidence": 0.9}],
+    "tax_lines": [{"label": "CGST", "rate_pct": 2.5, "amount": "1,875"}, {"label": "SGST", "rate_pct": 2.5, "amount": "1,875"}],
+    "tax_inclusive": False, "bank_change_notice": False, "bank_change_text": None, "po_reference_candidates": [],
+    "document_notes": "RECEIVED stamp covers the P.O. No. field; total is smudged.", "contains_instructions": False,
+}
+
+
+def test_ec3_scan_with_simulated_vision_model(fresh_db, monkeypatch):
+    calls = []
+
+    def fake_call(content, system, schema, max_tokens=16000):
+        calls.append([c["type"] for c in content])
+        if schema is extract_llm.POLISH_SCHEMA:
+            return json.loads(content[0]["text"].split("\n", 1)[1]) and content[0]["text"].split("\n", 1)[1]
+        return json.dumps(GREENLEAF_READ)
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-not-a-real-key")
+    monkeypatch.setattr(extract_llm, "_call", fake_call)
+    out = run_sample("SI-05")
+    d = out["decision"]
+    assert d["outcome"] == "approve_with_note", d["headline"]
+    assert json.loads(d["driving_rule_ids"]) == ["R07", "R02"]
+    # two passes for a scan: PDF document block, then a rendered page image in a different reading order
+    assert calls[0][0] == "document" and calls[1][0] == "image"
+    r07 = json.loads(out["rules"]["R07"]["facts"])
+    assert r07["method"] == "implied" and r07["po_id"] == "PO-2026-1005" and r07["score"] >= 0.9 and r07["gap"] >= 0.2
+    r02 = json.loads(out["rules"]["R02"]["facts"])
+    assert r02["lowest"] == 0.80 and r02["lowest_field"] == "Invoice date"
+    assert any(b["field"] == "Total" and b["to"] == 0.92 for b in r02["boosted"])
+    expl = json.loads(d["explanation"])
+    assert expl["headline"].startswith("Approved with a note: we matched this invoice to a purchase order")
+    assert any("₹75,000 plus ₹3,750 equals ₹78,750" in a for a in expl["attention"])
+
+
+def test_polish_fact_check_rejects_new_numbers():
+    base = {"headline": "Reject: GST is off by ₹10,000.", "attention": ["GST should be ₹31,320."], "next_step": "Ask Meridian."}
+    ok = {"headline": "Reject: the GST is ₹10,000 too low.", "attention": ["The GST ought to be ₹31,320."],
+          "next_step": "Please ask Meridian."}
+    bad = dict(ok, attention=["The GST ought to be ₹31,230."])
+    assert explain.fact_check(base, ok) and not explain.fact_check(base, bad)

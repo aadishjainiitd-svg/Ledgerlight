@@ -1,0 +1,22 @@
+route | screen | key element | console errors
+#s1 | S1 Dashboard | heading present, key element x26 | 0
+#s2 | S2 New run | heading present, key element x7 | 0
+#s3 | S3 Live run view | heading present, key element x9 stages done 9/9, decision card shown | 0
+#s4-ec1 | S4 EC1 Kestrel split PO | heading present, key element x1 "Review needed: this invoice would bill more than the purchas..." | 0
+#s4-ec2 | S4 EC2 Brightline duplicate | heading present, key element x1 "Reject: this looks like an invoice we have already paid...." | 0
+#s4-ec3 | S4 EC3 Greenleaf scan | heading present, key element x1 "Approved with a note: we matched this invoice to a purchase ..." | 0
+#s4-ec4 | S4 EC4 Corevolt bank change | heading present, key element x1 "Hold: the bank account on this invoice is different from the..." | 0
+#s5 | S5 Review queue | heading present, key element x9 | 0
+#s6 | S6 PO and vendor master data | heading present, key element x14 | 0
+#s7 | S7 Rules and tolerances | heading present, key element x16 | 0
+#s8 | S8 Audit log | heading present, key element x30 | 0
+flow S2 -> S3 -> S4: ok
+mobile #s1: scrollWidth 390 vs viewport 390 ok
+mobile #s2: scrollWidth 390 vs viewport 390 ok
+mobile #s3: scrollWidth 390 vs viewport 390 ok
+mobile #s4-ec4: scrollWidth 390 vs viewport 390 ok
+mobile #s5: scrollWidth 390 vs viewport 390 ok
+mobile #s6: scrollWidth 390 vs viewport 390 ok
+mobile #s7: scrollWidth 390 vs viewport 390 ok
+mobile #s8: scrollWidth 390 vs viewport 390 ok
+total console errors: 0; blocked network loads (fonts, offline sandbox): 0

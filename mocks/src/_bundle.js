@@ -1,0 +1,1534 @@
+/* ===== Ledgerlight mock data. All people, vendors, GSTINs and bank accounts are fictional. "Today" = 16 Nov 2026. ===== */
+const TODAY = new Date(2026, 10, 16, 11, 5);
+const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const fmtD = d => d.getDate() + ' ' + MON[d.getMonth()] + ' ' + d.getFullYear();
+const fmtDS = d => d.getDate() + ' ' + MON[d.getMonth()];
+const pad = n => String(n).padStart(2, '0');
+const fmtT = d => pad(d.getHours()) + ':' + pad(d.getMinutes());
+const inr = (n, d = 0) => '₹' + Number(n).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
+const inr2 = n => inr(n, 2);
+const dt = (m, d, h = 10, mi = 0) => new Date(2026, m - 1, d, h, mi);
+
+const OUT = {
+  auto:   { label: 'Approved',     long: 'Auto-approve',          ic: 'check-circle', rank: 0 },
+  note:   { label: 'Approved, note', long: 'Approve with note',   ic: 'note-circle',  rank: 1 },
+  review: { label: 'Needs review', long: 'Route for review',      ic: 'eye',          rank: 2 },
+  hold:   { label: 'On hold',      long: 'Hold: request info',    ic: 'pause-circle', rank: 3 },
+  reject: { label: 'Rejected',     long: 'Reject',                ic: 'x-circle',     rank: 4 },
+};
+const OUT_KEYS = ['auto', 'note', 'review', 'hold', 'reject'];
+const OUT_COLOR = { auto: 'var(--ok)', note: 'var(--note)', review: 'var(--review)', hold: 'var(--hold)', reject: 'var(--reject)' };
+
+const VENDORS = [
+  { id: 'V-101', name: 'Brightline Office Supplies Pvt Ltd', short: 'Brightline', gstin: '27AAFCB4821K1Z3', status: 'approved', terms: 'Net 30', bank: 'Harbor Union Bank', acct: '0123 4567 8901', ifsc: 'HUBK0000214', changed: '14 Mar 2025', phone: '+91 22 4018 2290', aliases: ['Brightline', 'Brightline Office Supplies'], addr: '14 Dockyard Road, Mumbai 400010' },
+  { id: 'V-102', name: 'Corevolt Electronics Pvt Ltd', short: 'Corevolt', gstin: '29AAHCC7710M1Z8', status: 'approved', terms: 'Net 45', bank: 'Harbor Union Bank', acct: '0001 2345 6789', ifsc: 'HUBK0000101', changed: '02 Aug 2024', phone: '+91 80 4125 7700', aliases: ['Corevolt', 'Corevolt Electronics'], addr: '22 Electronic City Phase 1, Bengaluru 560100' },
+  { id: 'V-103', name: 'Kestrel Print & Pack', short: 'Kestrel', gstin: '24AAMFK3302Q1Z6', status: 'approved', terms: 'Net 30', bank: 'Delta Savings Bank', acct: '7712 0034 2214', ifsc: 'DLSB0000220', changed: '19 Jan 2025', phone: '+91 79 4003 1182', aliases: ['Kestrel', 'Kestrel Print and Pack'], addr: 'Plot 88, GIDC Vatva, Ahmedabad 382445' },
+  { id: 'V-104', name: 'Greenleaf Pantry Supplies', short: 'Greenleaf', gstin: '27AAJFG9054R1Z2', status: 'approved', terms: 'Net 15', bank: 'Lakeview Bank', acct: '3300 1275 5508', ifsc: 'LKVB0000318', changed: '30 Sep 2025', phone: '+91 20 4410 6035', aliases: ['Greenleaf', 'Greenleaf Pantry'], addr: '5 Market Yard, Pune 411037' },
+  { id: 'V-105', name: 'Meridian Logistics Pvt Ltd', short: 'Meridian', gstin: '27AABCM6620D1Z9', status: 'approved', terms: 'Net 30', bank: 'Delta Savings Bank', acct: '7712 0098 4410', ifsc: 'DLSB0000220', changed: '11 Jun 2025', phone: '+91 22 6120 5544', aliases: ['Meridian', 'Meridian Logistics'], addr: 'Gala 12, Andheri East, Mumbai 400093' },
+  { id: 'V-106', name: 'Orion Stationers', short: 'Orion', gstin: '06AAKFO1177P1Z4', status: 'pending', terms: 'Net 30', bank: 'none on file', acct: '', ifsc: '', changed: 'n/a', phone: '+91 124 455 0182', aliases: ['Orion'], addr: 'Sector 18, Gurugram 122015' },
+];
+const V = id => VENDORS.find(v => v.id === id);
+
+/* ---- Rule catalogue (spec 3.4). stage: 3 fields, 4 vendor, 5 duplicate, 6 PO, 7 numbers ---- */
+const RULES = [
+  { id: 'R01', name: 'Required fields present', stage: 3, grp: 'Fields', sent: 'Invoice number, date, vendor, total and currency must all be present. If one is missing we hold the invoice and ask the vendor.' },
+  { id: 'R02', name: 'Extraction confidence', stage: 3, grp: 'Fields', sent: 'Every key field must be read with confidence of 0.90 or more. Between 0.75 and 0.90 we approve with a note. Below 0.75 we hold.' },
+  { id: 'R03', name: 'Invoice date sanity', stage: 3, grp: 'Fields', sent: 'The date cannot be in the future or before the PO date. Dates older than 180 days get a note.' },
+  { id: 'R04', name: 'Vendor approved and active', stage: 4, grp: 'Vendor', hard: true, sent: 'The vendor must be an approved vendor. Name-only matches go to review, pending vendors are held, blocked vendors are rejected.' },
+  { id: 'R05', name: 'Bank details match master', stage: 4, grp: 'Vendor', hard: true, sent: 'The bank account on the invoice must equal the one on file. Any change, or a note saying the details changed, puts the invoice on hold.' },
+  { id: 'R06', name: 'Duplicate invoice', stage: 5, grp: 'Duplicate', hard: true, sent: 'Reject if the invoice is 85% or more similar to an earlier one. Send to review between 60% and 85%.' },
+  { id: 'R07', name: 'PO resolved', stage: 6, grp: 'Purchase order', sent: 'Use the PO on the invoice. If none, infer it only when the best match scores 90% or more, beats the runner-up by 20 points and the invoice is up to ₹1,00,000.' },
+  { id: 'R08', name: 'PO status and validity', stage: 6, grp: 'Purchase order', sent: 'The PO must be open or partly billed and the invoice date must fall inside its validity window.' },
+  { id: 'R09', name: 'Every line maps to the PO', stage: 6, grp: 'Purchase order', sent: 'Lines that are not on the PO are sent to review when they are up to 10% of the invoice, and rejected above that.' },
+  { id: 'R10', name: 'Unit price vs PO', stage: 7, grp: 'Numbers', band: true, sent: '' },
+  { id: 'R11', name: 'Quantity vs PO remaining', stage: 7, grp: 'Numbers', band: true, sent: '' },
+  { id: 'R12', name: 'Cumulative billed vs PO value', stage: 7, grp: 'Numbers', band: true, sent: '' },
+  { id: 'R13', name: 'Tax maths', stage: 7, grp: 'Numbers', sent: 'GST must equal the taxable value times the rate. A difference up to ₹1 passes, up to ₹10 gets a note, up to ₹100 goes to review and more is rejected.' },
+  { id: 'R14', name: 'Total reconciles', stage: 7, grp: 'Numbers', sent: 'Subtotal plus tax must equal the stated total. Differences over ₹10 are rejected if we read the numbers clearly, otherwise held for re-checking.' },
+  { id: 'R15', name: 'High-value cap', stage: 7, grp: 'Numbers', sent: 'Any invoice above ₹10,00,000 needs a manager to sign it off.' },
+  { id: 'R16', name: 'Currency matches PO', stage: 7, grp: 'Numbers', sent: 'The invoice currency must be the same as the PO currency, otherwise it goes to review.' },
+];
+const STAGES = [
+  { n: 1, name: 'Ingest', desc: 'Store the file, hash it, detect text or scan' },
+  { n: 2, name: 'Extract', desc: 'Read fields and line items with confidence' },
+  { n: 3, name: 'Normalise and field checks', desc: 'Dates, money, tax, required fields' },
+  { n: 4, name: 'Vendor check', desc: 'Approved vendor? Do the bank details match?' },
+  { n: 5, name: 'Duplicate check', desc: 'Is this an invoice we have seen before?' },
+  { n: 6, name: 'PO match', desc: 'Find the PO and align every line' },
+  { n: 7, name: 'Validation rules', desc: 'Price, quantity, cumulative value, tax, total' },
+  { n: 8, name: 'Decision', desc: 'Worst severity across all rules wins' },
+  { n: 9, name: 'Explain and output', desc: 'Plain-English reasons and drafts' },
+];
+
+/* ---- Purchase orders (spec 9.2) ---- */
+const POS = [
+  { id: 'PO-2026-0998', v: 'V-101', issued: '2 Sep 2026', valid: '31 Dec 2026', status: 'Fully billed', lines: [['CP-A4-75', 'Copier paper A4 75gsm', 'reams', 400, 250, 18, 400]],
+    hist: [['BL/2026/0377', '20 Oct 2026', 118000, 'auto', 'bl0377', 'Paid 5 Nov'], ['BL-0377-26', '16 Nov 2026', 118000, 'reject', 'si04', 'Duplicate, blocked']] },
+  { id: 'PO-2026-1001', v: 'V-101', issued: '2 Oct 2026', valid: '31 Dec 2026', status: 'Fully billed', lines: [['CH-ERG-01', 'Ergonomic mesh chair', 'nos', 40, 6500, 18, 40], ['DK-STD-02', 'Height-adjustable standing desk', 'nos', 20, 12000, 18, 20]],
+    hist: [['BL/2026/0412', '14 Nov 2026', 590000, 'auto', 'si01', 'In payment queue']] },
+  { id: 'PO-2026-1002', v: 'V-102', issued: '12 Oct 2026', valid: '31 Dec 2026', status: 'Fully billed', lines: [['DS-USB-C', 'USB-C docking station', 'nos', 30, 7200, 18, 30], ['KM-W1', 'Wireless keyboard and mouse set', 'nos', 30, 1800, 18, 30]],
+    hist: [['CV-8841', '9 Nov 2026', 323379, 'note', 'si02', 'Billed 1.5% above PO']] },
+  { id: 'PO-2026-1004', v: 'V-103', issued: '20 Sep 2026', valid: '31 Dec 2026', status: 'Partially billed', lines: [['CTN-L', 'Corrugated shipping carton, large', 'nos', 10000, 40, 18, 7500], ['SETUP-01', 'Custom print setup', 'lot', 1, 20000, 18, 1]],
+    hist: [['K/1187', '6 Oct 2026', 212400, 'auto', 'k1187', '4,000 cartons + setup'], ['K/1203', '27 Oct 2026', 165200, 'auto', 'k1203', '3,500 cartons'], ['K/1241', '10 Nov 2026', 141600, 'review', 'si03', '3,000 cartons, pending review']], pending: 120000 },
+  { id: 'PO-2026-1005', v: 'V-104', issued: '2 Nov 2026', valid: '31 Dec 2026', status: 'Open', lines: [['PNT-TEA', 'Tea premix', 'kg', 200, 420, 5, 0], ['PNT-SUG', 'Sugar', 'kg', 300, 48, 5, 0]],
+    hist: [['GL-2291', '12 Nov 2026', 78750, 'note', 'si05', 'PO inferred, 96%']] },
+  { id: 'PO-2026-1007', v: 'V-104', issued: '4 Nov 2026', valid: '31 Dec 2026', status: 'Open', lines: [['PNT-CUP', 'Paper cup 150 ml', 'nos', 25000, 1.6, 12, 0], ['PNT-STR', 'Wooden stirrer', 'nos', 20000, 0.4, 12, 0]], hist: [] },
+  { id: 'PO-2026-1008', v: 'V-102', issued: '28 Oct 2026', valid: '31 Dec 2026', status: 'Open', lines: [['NS-24P', '24-port managed switch', 'nos', 6, 21000, 18, 0], ['PC-CAT6', 'Cat6 patch cable 2 m', 'nos', 60, 250, 18, 0]],
+    hist: [['CV-8902', '13 Nov 2026', 166380, 'hold', 'si06', 'Bank details changed']], pending: 141000 },
+  { id: 'PO-2026-1009', v: 'V-105', issued: '30 Oct 2026', valid: '31 Dec 2026', status: 'Open', lines: [['FR-MUM-PUN', 'Full-truck freight Mumbai to Pune', 'trips', 12, 14500, 18, 0]],
+    hist: [['MX-5530', '11 Nov 2026', 195320, 'reject', 'si07', 'GST wrong by ₹10,000']] },
+  { id: 'PO-2026-0968', v: 'V-103', issued: '14 Aug 2026', valid: '30 Nov 2026', status: 'Closed', lines: [['CTN-M', 'Corrugated carton, medium', 'nos', 6000, 28, 18, 6000]], hist: [], seed: 1 },
+  { id: 'PO-2026-0971', v: 'V-101', issued: '21 Aug 2026', valid: '30 Nov 2026', status: 'Fully billed', lines: [['FL-A4-01', 'Filing folder A4 (box of 50)', 'boxes', 120, 780, 18, 120]], hist: [], seed: 1 },
+  { id: 'PO-2026-0974', v: 'V-102', issued: '25 Aug 2026', valid: '30 Nov 2026', status: 'Closed', lines: [['MON-27', '27-inch monitor', 'nos', 24, 12500, 18, 24]], hist: [], seed: 1 },
+  { id: 'PO-2026-0977', v: 'V-105', issued: '1 Sep 2026', valid: '31 Dec 2026', status: 'Partially billed', lines: [['FR-DEL-NG', 'Freight Delhi to Noida', 'trips', 30, 6200, 18, 21]], hist: [], seed: 1 },
+  { id: 'PO-2026-0979', v: 'V-104', issued: '4 Sep 2026', valid: '31 Dec 2026', status: 'Partially billed', lines: [['PNT-COF', 'Instant coffee 500 g', 'nos', 400, 310, 5, 260]], hist: [], seed: 1 },
+  { id: 'PO-2026-0985', v: 'V-101', issued: '12 Sep 2026', valid: '31 Dec 2026', status: 'Open', lines: [['TNR-BK', 'Black toner cartridge', 'nos', 36, 3450, 18, 0]], hist: [], seed: 1 },
+];
+const PO = id => POS.find(p => p.id === id);
+const poSub = p => p.lines.reduce((s, l) => s + l[3] * l[4], 0);
+const poBilled = p => p.lines.reduce((s, l) => s + l[6] * l[4], 0);
+
+/* ---- helpers to build invoice objects ---- */
+const CATALOG = {
+  'V-101': { po: ['PO-2026-0971'], pre: 'BL/2026/', item: ['Filing folder A4 (box of 50)', 780, 'boxes'], pat: 'bl' },
+  'V-102': { po: ['PO-2026-0974'], pre: 'CV-', item: ['27-inch monitor', 12500, 'nos'], pat: 'cv' },
+  'V-103': { po: ['PO-2026-0968'], pre: 'K/', item: ['Corrugated carton, medium', 28, 'nos'], pat: 'k' },
+  'V-104': { po: ['PO-2026-0979'], pre: 'GL-', item: ['Instant coffee 500 g', 310, 'nos'], pat: 'gl' },
+  'V-105': { po: ['PO-2026-0977'], pre: 'MX-', item: ['Freight Delhi to Noida', 6200, 'trips'], pat: 'mx' },
+};
+function rnd(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const R = rnd(20261116);
+
+const RUNS = [];   /* summary rows for dashboard and queue */
+const INV = {};    /* full detail by key */
+const ALIAS = { ec1: 'si03', ec2: 'si04', ec3: 'si05', ec4: 'si06' };
+
+/* Compact constructor for any invoice. Detail panels are generated from this plus per-invoice overrides. */
+function mkInv(o) {
+  const v = V(o.vendor);
+  const sub = o.sub, rate = o.rate ?? 18, tax = o.tax ?? Math.round(sub * rate / 100), gross = o.gross ?? (sub + tax);
+  const inv = Object.assign({
+    key: o.key, code: o.code || '', file: o.file || (o.invNo.replace(/[\/ ]/g, '-') + '.pdf'), run: o.run || ('run_' + Math.floor(R() * 0xffff).toString(16).padStart(4, '0')),
+    invNo: o.invNo, vendor: o.vendor, vname: v.short, vfull: v.name, po: o.po, date: o.date, sub, rate, tax, gross, outcome: o.outcome, exposure: o.exposure || 0,
+    owner: o.owner || null, time: o.time, dur: o.dur || 11 + Math.floor(R() * 6), doc: o.doc || 'text', pdf: o.pdf !== false, pages: 1, conf: o.conf || 0.96, overridden: false,
+    cat: o.cat || null, reason: o.reason || 'All 16 checks passed', rec: o.rec || '', age: o.age || 0,
+  }, o);
+  inv.rv = o.rv || {};
+  return inv;
+}
+const addRun = inv => { INV[inv.key] = inv; RUNS.push(inv); return inv; };
+
+/* ---- The 7 samples + 3 seeded named invoices ---- */
+addRun(mkInv({ key: 'bl0377', code: 'Seed', file: 'BL-2026-0377.pdf', run: 'run_2a07', invNo: 'BL/2026/0377', vendor: 'V-101', po: 'PO-2026-0998', date: '20 Oct 2026', sub: 100000, outcome: 'auto', time: dt(10, 21, 10, 12), dur: 12, conf: 0.97, reason: 'All 16 checks passed. Paid on 5 Nov.', paid: '5 Nov 2026',
+  items: [['Copier paper A4 75gsm', 400, 'reams', 250, 100000, 18]] }));
+addRun(mkInv({ key: 'k1187', code: 'Seed', file: 'K-1187.pdf', run: 'run_91d4', invNo: 'K/1187', vendor: 'V-103', po: 'PO-2026-1004', date: '6 Oct 2026', sub: 180000, outcome: 'auto', time: dt(10, 17, 15, 40), dur: 13, conf: 0.98, reason: 'All 16 checks passed. 4,000 cartons plus print setup.',
+  items: [['Corrugated shipping carton, large (lot 1 of 3)', 4000, 'nos', 40, 160000, 18], ['Custom print setup', 1, 'lot', 20000, 20000, 18]] }));
+addRun(mkInv({ key: 'k1203', code: 'Seed', file: 'K-1203.pdf', run: 'run_c4b8', invNo: 'K/1203', vendor: 'V-103', po: 'PO-2026-1004', date: '27 Oct 2026', sub: 140000, outcome: 'auto', time: dt(10, 28, 11, 5), dur: 12, conf: 0.98, reason: 'All 16 checks passed. 3,500 cartons.',
+  items: [['Corrugated shipping carton, large (lot 2 of 3)', 3500, 'nos', 40, 140000, 18]] }));
+addRun(mkInv({ key: 'si01', code: 'SI-01', file: 'SI-01_brightline_BL-2026-0412.pdf', run: 'run_5b21', invNo: 'BL/2026/0412', vendor: 'V-101', po: 'PO-2026-1001', date: '14 Nov 2026', sub: 500000, outcome: 'auto', time: dt(11, 14, 16, 20), dur: 11, conf: 0.95, reason: 'All 16 checks passed. Prices, quantities, GST and total match PO-2026-1001.',
+  items: [['Ergonomic mesh chair', 40, 'nos', 6500, 260000, 18], ['Height-adjustable standing desk', 20, 'nos', 12000, 240000, 18]],
+  sampleDesc: 'Clean PDF, tax separate, PO printed on the invoice', expect: 'Approved' }));
+addRun(mkInv({ key: 'si02', code: 'SI-02', file: 'SI-02_corevolt_CV-8841.pdf', run: 'run_77e0', invNo: 'CV-8841', vendor: 'V-102', po: 'PO-2026-1002', date: '9 Nov 2026', sub: 274050, tax: 49329, gross: 323379, outcome: 'note', time: dt(11, 10, 11, 32), dur: 14, conf: 0.93, taxIncl: true,
+  reason: 'Billed 1.5% above the PO (₹4,050), inside the allowed 2%.', items: [['IT peripherals supply: docking stations and wireless keyboard-mouse sets, 30 each', 30, 'sets', 10779.3, 323379, 18]],
+  sampleDesc: 'Compact layout, one bundled line, prices include GST', expect: 'Approved, note',
+  rv: { R10: ['note', 'The bundle is priced ₹4,050 (1.5%) above the two PO lines it covers. Allowed: up to 2% and ₹5,000.'], R12: ['note', 'Pre-tax ₹2,74,050 against ₹2,70,000 on the PO: ₹4,050 (1.5%) over. Allowed: up to 2% and ₹5,000.'], R13: ['pass', 'GST of ₹49,329 is correct once the tax-inclusive prices are backed out (₹3,23,379 ÷ 1.18).'], R09: ['pass', 'One invoice line covers two PO lines (docking station and keyboard-mouse set). Matched as a bundle.'], R07: ['pass', 'PO-2026-1002 found. The invoice wrote it as "Ref your PO 1002/2026", which we normalised.'] },
+  ok: ['Vendor approved; PO-2026-1002 found (written as "1002/2026" and normalised)', 'The bundled line covers both PO lines, 30 docking stations and 30 keyboard-mouse sets', 'GST of ₹49,329 is correct for the tax-inclusive prices', 'Not a duplicate'],
+  attention: ['The vendor billed ₹4,050 (1.5%) more than the PO. That is inside the allowed difference of 2% and ₹5,000, so we approved it and attached a note.'],
+  next: 'None needed. The invoice is in the payment queue with the note attached. About 1 in 10 noted invoices is sampled for the monthly audit.', headline: 'Approved with a note: the vendor billed 1.5% more than the PO, which is within the allowed difference.' }));
+addRun(mkInv({ key: 'si03', code: 'SI-03', ec: 'EC1', file: 'SI-03_kestrel_K-1241.pdf', run: 'run_3c9e', invNo: 'K/1241', vendor: 'V-103', po: 'PO-2026-1004', date: '10 Nov 2026', sub: 120000, outcome: 'review', time: dt(11, 13, 14, 5), dur: 14, conf: 0.97, exposure: 23600, owner: 'Manager', age: 3, cat: 'Quantity or price above PO',
+  reason: 'Third lot would bill 500 more cartons than were ordered (₹23,600 with GST).', rec: 'Approve ₹1,18,000, request credit note ₹23,600',
+  items: [['Corrugated shipping carton, large (lot 3 of 3)', 3000, 'nos', 40, 120000, 18]],
+  sampleDesc: 'Third invoice against a split PO, same template as before', expect: 'Needs review',
+  rv: { R11: ['review', '3,000 cartons billed against 2,500 remaining: 500 over, which is 5.0% of the 10,000 ordered. Allowed: up to 2%.'], R12: ['review', 'Cumulative pre-tax billed would be ₹4,40,000 against ₹4,20,000 on the PO: ₹20,000 (4.76%) over.'], R10: ['pass', 'Price per carton ₹40.00 matches the PO.'], R13: ['pass', 'GST of ₹21,600 is correct at 18%.'] },
+  headline: 'Review needed: this invoice would bill more than the purchase order allows.',
+  ok: ['Vendor approved', 'PO-2026-1004 found on the invoice', 'Price per carton matches (₹40)', 'GST is calculated correctly', 'Not a duplicate'],
+  attention: ['Together with the two earlier invoices, Kestrel has now billed for 10,500 cartons, but only 10,000 were ordered. This invoice asks for 3,000 cartons and only 2,500 remain on the order. That is 500 cartons, or ₹23,600 including GST, more than agreed.'],
+  next: 'Approve ₹1,18,000 (2,500 cartons) and ask Kestrel for a credit note of ₹23,600. Or ask Procurement to increase the PO if the extra cartons were really delivered.' }));
+addRun(mkInv({ key: 'si04', code: 'SI-04', ec: 'EC2', file: 'SI-04_brightline_rescan_BL-0377-26.pdf', run: 'run_8f3a', invNo: 'BL-0377-26', vendor: 'V-101', po: 'PO-2026-0998', date: '20 Oct 2026', sub: 100000, outcome: 'reject', time: dt(11, 16, 10, 41), dur: 14, doc: 'scanned', photo: true, conf: 0.84, exposure: 118000, owner: 'Manager', age: 0, cat: 'Duplicate',
+  reason: 'Same invoice as BL/2026/0377, already paid on 5 Nov. The number is written differently.', rec: 'Do not pay. Reply to Brightline that this was paid on 5 Nov',
+  items: [['Copier paper A4 75gsm', 400, 'reams', 250, 100000, 18]],
+  sampleDesc: 'Phone photo of an invoice, image-only PDF, skewed', expect: 'Rejected',
+  rv: { R06: ['reject', 'This is 100% similar to BL/2026/0377 (₹1,18,000.00, 20 Oct 2026), approved 21 Oct and paid 5 Nov. Amount, number, date, PO and items all match.'], R08: ['reject', 'PO-2026-0998 is already fully billed (400 of 400 reams).'], R11: ['reject', '400 reams billed against 0 remaining: 400 over, which is 100% of the 400 ordered.'], R12: ['reject', 'Cumulative pre-tax billed would be ₹2,00,000 against ₹1,00,000 on the PO.'], R02: ['note', 'The invoice number was read at 0.84 because the photo is skewed.'] },
+  headline: 'Reject: this looks like an invoice we have already paid.',
+  ok: ['Vendor approved (matched by GSTIN)', 'Bank account matches the one on file', 'GST of ₹18,000 is correct at 18%'],
+  attention: ['This matches invoice BL/2026/0377 from Brightline (₹1,18,000.00, dated 20 Oct 2026), which was approved on 21 Oct and paid on 5 Nov. The invoice number is written differently ("BL-0377-26"), but the amount, date, PO (PO-2026-0998) and items are identical. Also, that PO is already fully billed.'],
+  next: 'Do not pay. Reply to Brightline that this was paid on 5 Nov (draft ready). If this is genuinely a different invoice, a manager can overturn this decision.' }));
+addRun(mkInv({ key: 'si05', code: 'SI-05', ec: 'EC3', file: 'SI-05_greenleaf_GL-2291_scan.pdf', run: 'run_a61c', invNo: 'GL-2291', vendor: 'V-104', po: '—', poInferred: 'PO-2026-1005', date: '12 Nov 2026', sub: 75000, rate: 5, outcome: 'note', time: dt(11, 13, 9, 48), dur: 15, doc: 'scanned', conf: 0.80,
+  reason: 'PO number was missing. Matched to PO-2026-1005 with 96% confidence.', items: [['Tea premix', 150, 'kg', 420, 63000, 5], ['Sugar', 250, 'kg', 48, 12000, 5]],
+  sampleDesc: 'Degraded scan, no PO number, smudged total', expect: 'Approved, note',
+  rv: { R02: ['note', 'Lowest confidence is the invoice date at 0.80 (it could be read two ways). The total was read at 0.78 and raised to 0.92 because lines plus tax equal the total.'], R07: ['note', 'No PO number on the invoice. PO-2026-1005 is the best match at 96%; the other open order scores 14%.'], R03: ['pass', 'Read as 12 Nov 2026 (day first). The other reading, 11 Dec 2026, is in the future.'], R04: ['pass', 'Greenleaf Pantry Supplies is an approved vendor (matched by GSTIN on the letterhead).'], R05: ['pass', 'No bank details printed on the invoice. Nothing to compare.'] },
+  headline: 'Approved with a note: we matched this invoice to a purchase order that the vendor did not mention.',
+  ok: ['Vendor approved', 'Items and prices match PO-2026-1005 exactly', 'GST at 5% is correct', 'Quantities are within what is left on the order', 'Not a duplicate'],
+  attention: ['The PO number was missing. PO-2026-1005 is the only open order with tea and sugar at these prices (96% match; the other open order scores 14%).', 'The scan was blurry. We checked the total by adding up the lines and tax (₹75,000 plus ₹3,750 equals ₹78,750), so we trust it.', 'The date "12/11/26" was read as 12 November 2026.'],
+  next: 'None needed. You can correct any field if you disagree and the invoice will be re-checked.' }));
+addRun(mkInv({ key: 'si06', code: 'SI-06', ec: 'EC4', file: 'SI-06_corevolt_CV-8902_bank-change.pdf', run: 'run_d2f5', invNo: 'CV-8902', vendor: 'V-102', po: 'PO-2026-1008', date: '13 Nov 2026', sub: 141000, outcome: 'hold', time: dt(11, 14, 15, 22), dur: 13, conf: 0.96, exposure: 166380, owner: 'Manager', age: 2, cat: 'Bank change',
+  reason: 'Bank account on the invoice differs from the one on file. Everything else matches.', rec: 'Call Corevolt on the number in our vendor file and confirm in writing',
+  items: [['24-port managed switch', 6, 'nos', 21000, 126000, 18], ['Cat6 patch cable 2 m', 60, 'nos', 250, 15000, 18]],
+  sampleDesc: 'Perfect numbers, new bank details in the footer', expect: 'On hold',
+  rv: { R05: ['hold', 'The invoice asks us to pay Riverbend Co-operative Bank (account ending 2347). We have Harbor Union Bank (account ending 6789). The invoice also says "bank details have changed".'] },
+  headline: 'Hold: the bank account on this invoice is different from the one we have on file.',
+  ok: ['Approved vendor', 'PO-2026-1008 found', 'All prices, quantities, GST and total match'],
+  attention: ['The invoice asks us to pay Riverbend Co-operative Bank (account ending 2347). Our records have Harbor Union Bank (account ending 6789) for Corevolt. A changed bank account on an invoice is a common sign of payment fraud, so we never pay on the invoice alone.'],
+  next: 'Call Corevolt on the phone number in our vendor file (not the one on the invoice) and confirm the change. Ask for the change on company letterhead. A manager will update the vendor record and release the hold.' }));
+addRun(mkInv({ key: 'si07', code: 'SI-07', file: 'SI-07_meridian_MX-5530_tax-error.pdf', run: 'run_e0b9', invNo: 'MX-5530', vendor: 'V-105', po: 'PO-2026-1009', date: '11 Nov 2026', sub: 174000, tax: 21320, gross: 195320, outcome: 'reject', time: dt(11, 15, 17, 10), dur: 12, conf: 0.97, exposure: 10000, owner: 'Clerk pool', age: 1, cat: 'Tax or total',
+  reason: 'GST on the invoice is ₹10,000 too low. It should be ₹31,320.', rec: 'Send return notice asking Meridian for a corrected invoice',
+  items: [['Full-truck freight Mumbai to Pune', 12, 'trips', 14500, 174000, 18]],
+  sampleDesc: 'Clean PDF with a wrong GST amount (a digit slip)', expect: 'Rejected',
+  rv: { R13: ['reject', 'GST shown is ₹21,320 but 18% of ₹1,74,000 is ₹31,320. Off by ₹10,000. Allowed: up to ₹100.'], R14: ['pass', 'Subtotal ₹1,74,000 plus tax ₹21,320 equals the stated total ₹1,95,320 (consistent with the wrong tax).'] },
+  headline: 'Reject: the GST on this invoice is wrong and the vendor must send a corrected one.',
+  ok: ['Vendor approved', 'PO-2026-1009 found', 'Freight rate matches the PO (₹14,500 a trip, 12 trips)', 'Not a duplicate'],
+  attention: ['GST should be ₹31,320 (18% of ₹1,74,000) but the invoice shows ₹21,320, which is ₹10,000 too low. The total on the invoice is consistent with the wrong tax, so the error is in the tax line. GST amounts must be right for input credit.'],
+  next: 'Send Meridian the return notice (draft ready) and ask for a corrected invoice. Nothing is paid until it arrives.' }));
+
+/* ---- synthetic history: 28 auto, 8 note, 14 exceptions (8 review, 4 hold, 2 reject) ---- */
+const VPOOL = ['V-101', 'V-102', 'V-103', 'V-104', 'V-105'];
+let serial = { 'V-101': 410, 'V-102': 8800, 'V-103': 1210, 'V-104': 2270, 'V-105': 5500 };
+const nextNo = vid => { const s = ++serial[vid] + Math.floor(R() * 3); serial[vid] = s; const c = CATALOG[vid]; return c.pre + (vid === 'V-101' ? '0' + s : s); };
+function synthTime(i, n) { const d = new Date(TODAY.getTime() - Math.floor(R() * 29.5 * 86400000)); d.setHours(9 + Math.floor(R() * 8), Math.floor(R() * 60)); return d > TODAY ? dt(11, 16, 9, 20 + i % 30) : d; }
+const NOTE_REASONS = ['Price 1.2% above the PO, inside the allowed 2%.', 'PO inferred at 94% confidence; the invoice had no PO number.', 'Scan was blurry; total confirmed because the lines add up.', 'Quantity 1.4% above what remained on the PO.', 'GST off by ₹6 from rounding, inside the allowed ₹10.', 'Invoice dated more than 180 days ago.', 'Price 0.9% above the PO, inside the allowed 2%.', 'Date could be read two ways; read as day first.'];
+let si = 0;
+const mkSyn = (out, vid, sp) => {
+  const c = CATALOG[vid]; const qty = Math.max(2, Math.round((18000 + R() * 420000) / c.item[1] / (c.item[2] === 'trips' ? 1 : 1)));
+  const sub = qty * c.item[1]; const invNo = nextNo(vid); const key = 'r' + (++si);
+  const conf = out === 'auto' ? 0.93 + R() * 0.06 : out === 'note' ? 0.78 + R() * 0.11 : sp.conf || 0.88 + R() * 0.09;
+  const inv = mkInv(Object.assign({ key, code: 'Seed', invNo, vendor: vid, po: c.po[Math.floor(R() * c.po.length)], date: '', sub, outcome: out, time: synthTime(si, 50), dur: 9 + Math.floor(R() * 9), conf: Math.round(conf * 100) / 100, pdf: false,
+    items: [[c.item[0], qty, c.item[2], c.item[1], sub, 18]], reason: out === 'auto' ? 'All 16 checks passed' : out === 'note' ? NOTE_REASONS[si % NOTE_REASONS.length] : '', synth: true }, sp));
+  if (sp.age !== undefined) inv.time = new Date(TODAY.getTime() - sp.age * 86400000 - (1 + R() * 5) * 3600000);
+  const d = new Date(inv.time.getTime() - (2 + Math.floor(R() * 6)) * 86400000); inv.date = fmtD(d);
+  return addRun(inv);
+};
+for (let i = 0; i < 28; i++) mkSyn('auto', VPOOL[Math.floor(R() * 5)], {});
+for (let i = 0; i < 8; i++) mkSyn('note', VPOOL[Math.floor(R() * 5)], {});
+const EXC = [
+  ['review', 'V-101', 'Quantity or price above PO', 'Billed 14 boxes more than remain on the PO (₹12,908 with GST).', 12908, 'Manager', 2, 'Approve what remains, request credit note ₹12,908'],
+  ['review', 'V-102', 'Quantity or price above PO', 'Monitor price 4.2% above the PO (₹21,000 over).', 24780, 'Manager', 1, 'Ask Procurement to confirm the new price'],
+  ['review', 'V-105', 'Quantity or price above PO', 'Three more trips billed than the PO allows (₹43,500 with GST).', 51330, 'Manager', 3, 'Approve 27 trips, request credit note ₹51,330'],
+  ['review', 'V-103', 'Quantity or price above PO', 'Carton price 3.1% above the PO (₹1,848 over).', 2181, 'Clerk pool', 0, 'Accept if Procurement agreed the new price'],
+  ['review', 'V-104', 'Duplicate', 'Possible duplicate: 72% similar to an invoice from 3 Nov.', 31500, 'Clerk pool', 1, 'Compare side by side, then accept or reject'],
+  ['review', 'V-101', 'Vendor problem', 'Vendor matched by name only; the GSTIN did not match.', 8200, 'Clerk pool', 2, 'Confirm the vendor with Procurement'],
+  ['review', 'V-102', 'Tax or total', 'GST rate is 18% but the PO line says 12%.', 7740, 'Clerk pool', 0, 'Ask Corevolt which rate applies'],
+  ['review', 'V-105', 'Vendor problem', 'The PO belongs to a different vendor (Kestrel).', 62000, 'Manager', 1, 'Ask Procurement which PO was meant'],
+  ['hold', 'V-104', 'Missing information', 'Invoice date is missing. We asked Greenleaf for a copy with the date.', 18400, 'Clerk pool', 3, 'Chase Greenleaf; SLA ends tomorrow'],
+  ['hold', 'V-102', 'Missing information', 'Total could not be read with confidence (0.62).', 88500, 'Clerk pool', 1, 'Ask for a clearer copy of the invoice'],
+  ['hold', 'V-101', 'Vendor problem', 'Vendor is pending onboarding (Orion Stationers).', 22400, 'Manager', 2, 'Finish onboarding, then re-run'],
+  ['hold', 'V-103', 'Missing information', 'No PO on the invoice and no plausible match among open POs.', 46200, 'Clerk pool', 0, 'Ask Procurement or the vendor for the PO'],
+  ['reject', 'V-103', 'Duplicate', 'Exact copy of a file we already processed (same file hash).', 52640, 'Manager', 1, 'Send return notice; do not pay'],
+  ['reject', 'V-101', 'Quantity or price above PO', 'Unit price 14% above the PO, so this is a different transaction.', 63200, 'Clerk pool', 2, 'Send return notice and ask for a reissue'],
+];
+EXC.forEach(([out, vid, cat, reason, exp, owner, age, rec]) => mkSyn(out, vid, { cat, reason, exposure: exp, owner, age, rec, conf: out === 'hold' ? 0.58 + R() * 0.2 : 0.9 + R() * 0.07 }));
+RUNS.sort((a, b) => b.time - a.time);
+/* one run still in progress, shown live on the dashboard */
+const RUNNING = { key: 'running1', invNo: 'MX-5541', vname: 'Meridian', vfull: V('V-105').name, vendor: 'V-105', po: 'PO-2026-1009', gross: 205320, outcome: 'running', time: new Date(TODAY.getTime() - 90000), run: 'run_f01a' };
+
+/* ---- metrics helpers ---- */
+const COUNTS = () => OUT_KEYS.reduce((m, k) => (m[k] = RUNS.filter(r => r.outcome === k).length, m), {});
+const EXCEPTIONS = () => RUNS.filter(r => ['review', 'hold', 'reject'].includes(r.outcome));
+const OPEN_EXC = () => RUNS.filter(r => r.outcome === 'review' || r.outcome === 'hold');
+
+/* ---- audit log ---- */
+const AUDIT = [];
+function buildAudit() {
+  const add = (ts, actor, type, summary, obj, outcome, payload) => AUDIT.push({ ts, actor, type, summary, obj, outcome, payload: payload || {} });
+  const SYS = { t: 'System', n: 'Ledgerlight rules' }, AI = { t: 'AI model', n: 'Vision model v3' };
+  RUNS.filter(r => !r.synth).forEach(r => {
+    const t = r.time, who = { t: 'Human', n: r.key === 'si04' ? 'Priya Nair' : 'Priya Nair' };
+    const o = { k: 'Invoice', id: r.invNo, href: '#s4-' + r.key };
+    add(new Date(t.getTime() - 14000), who, 'Run created', `Uploaded ${r.file} for ${r.vname}`, o, null, { run: r.run, source: r.code === 'Seed' ? 'email' : 'sample', file: r.file });
+    add(new Date(t.getTime() - 9500), AI, 'Stage completed', `Extracted ${r.items ? r.items.length + 2 : 8} fields and ${r.items ? r.items.length : 1} line item(s) from ${r.vname} invoice ${r.invNo}`, o, null, { model: 'vision-llm-v3', prompt: 'extract-2.4', lowest: r.conf, cached: true });
+    Object.keys(r.rv).slice(0, 2).forEach((rid, i) => { const [sev, msg] = r.rv[rid]; if (sev !== 'pass') add(new Date(t.getTime() - 4000 + i * 300), SYS, 'Rule evaluated', `${RULES.find(x => x.id === rid).name}: ${msg}`, o, sev, { rule: rid, severity: sev, facts: { invoice: r.invNo, gross: r.gross } }); });
+    add(t, SYS, 'Decision made', `${OUT[r.outcome].long}: ${r.headline || r.reason}`, o, r.outcome, { decision: r.outcome, exposure: r.exposure, assigned: r.owner, config_version: 14 });
+  });
+  const S = (r) => ({ k: 'Invoice', id: r.invNo, href: '#s4-' + r.key });
+  const syn = RUNS.filter(r => r.synth);
+  syn.slice(0, 18).forEach(r => add(r.time, SYS, 'Decision made', `${OUT[r.outcome].long}: ${r.reason}`, S(r), r.outcome, { decision: r.outcome, config_version: 14 }));
+  add(dt(11, 16, 9, 41), { t: 'Human', n: 'Rahul Mehta' }, 'Override', `Approved CV-8790 after review: PO amended by Procurement`, { k: 'Invoice', id: 'CV-8790', href: '#s5' }, 'auto', { before: 'Needs review', after: 'Approved', reason_code: 'PO amended by Procurement', reason_text: 'Procurement raised PO quantity by 14 boxes on 15 Nov.' });
+  add(dt(11, 15, 16, 22), { t: 'Human', n: 'Priya Nair' }, 'Field corrected', `Corrected total on GL-2268: ₹1,12,000 to ₹1,21,000`, { k: 'Invoice', id: 'GL-2268', href: '#s5' }, null, { before: '₹1,12,000.00', after: '₹1,21,000.00', field: 'total', stages_rerun: '3 to 9' });
+  add(dt(11, 14, 11, 8), { t: 'Human', n: 'Rahul Mehta' }, 'Settings changed', 'Rule R10 unit price: note band changed from 1.5% to 2.0%', { k: 'Setting', id: 'R10', href: '#s7' }, null, { before: '1.5%', after: '2.0%', reason: 'Aligned with contract terms for office supplies', version: '13 to 14' });
+  add(dt(11, 12, 15, 30), { t: 'Human', n: 'Rahul Mehta' }, 'Master data changed', 'Updated Kestrel contact phone', { k: 'Vendor', id: 'V-103', href: '#s6' }, null, { before: '+91 79 4003 1100', after: '+91 79 4003 1182', verified_by: 'Rahul Mehta' });
+  add(dt(11, 15, 18, 2), { t: 'Human', n: 'Rahul Mehta' }, 'Export', 'Exported approved invoices (CSV), last 30 days', { k: 'Export', id: 'approved.csv', href: '#s1' }, null, { rows: 42, filter: 'Approved, Approved with note' });
+  add(dt(11, 9, 10, 2), { t: 'Human', n: 'Rahul Mehta' }, 'Master data changed', 'Added purchase order PO-2026-1009 for Meridian Logistics', { k: 'PO', id: 'PO-2026-1009', href: '#s6' }, null, { before: '(none)', after: '12 trips x ₹14,500, GST 18%', source: 'CSV import (3 rows)' });
+  AUDIT.sort((a, b) => b.ts - a.ts);
+}
+buildAudit();
+
+/* ===== UI helpers ===== */
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const sleepRaw = ms => new Promise(r => setTimeout(r, ms));
+
+const ICONS = {
+  'check': '<path d="M20 6 9 17l-5-5"/>',
+  'check-circle': '<circle cx="12" cy="12" r="9"/><path d="m8 12.5 3 3 5-6"/>',
+  'note-circle': '<circle cx="11" cy="13" r="8"/><path d="m7.5 13 2.5 2.5 4.5-5"/><circle cx="19" cy="5" r="2.4" fill="currentColor" stroke="none"/>',
+  'x-circle': '<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/>',
+  'x': '<path d="M18 6 6 18M6 6l12 12"/>',
+  'eye': '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  'pause-circle': '<circle cx="12" cy="12" r="9"/><path d="M10 9v6M14 9v6"/>',
+  'spinner': '<path d="M12 3a9 9 0 1 0 9 9" />',
+  'warn': '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
+  'dash': '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
+  'upload': '<path d="M12 16V4M7 9l5-5 5 5M4 20h16"/>',
+  'queue': '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  'db': '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
+  'sliders': '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
+  'scroll': '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h6"/>',
+  'search': '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  'chev-r': '<path d="m9 6 6 6-6 6"/>', 'chev-d': '<path d="m6 9 6 6 6-6"/>', 'chev-l': '<path d="m15 6-6 6 6 6"/>', 'chev-u': '<path d="m6 15 6-6 6 6"/>',
+  'arrow-r': '<path d="M5 12h14M13 6l6 6-6 6"/>', 'arrow-l': '<path d="M19 12H5M11 6l-6 6 6 6"/>',
+  'download': '<path d="M12 4v12M7 11l5 5 5-5M4 20h16"/>',
+  'copy': '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/>',
+  'edit': '<path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/>',
+  'user': '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>',
+  'cpu': '<rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9.5" y="9.5" width="5" height="5"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/>',
+  'gear': '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  'link': '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+  'clock': '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  'refresh': '<path d="M20 11a8 8 0 0 0-14.3-4M4 4v4h4M4 13a8 8 0 0 0 14.3 4M20 20v-4h-4"/>',
+  'plus': '<path d="M12 5v14M5 12h14"/>',
+  'sun': '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  'moon': '<path d="M21 13A9 9 0 1 1 11 3a7 7 0 0 0 10 10z"/>',
+  'menu': '<path d="M4 6h16M4 12h16M4 18h16"/>',
+  'filter': '<path d="M3 5h18l-7 8v6l-4-2v-4z"/>',
+  'mail': '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
+  'shield': '<path d="M12 3 4 6v6c0 5 3.4 8.4 8 9 4.6-.6 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/>',
+  'lock': '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  'file': '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/>',
+  'phone': '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/>',
+  'play': '<path d="m6 4 14 8-14 8z"/>', 'cancel': '<circle cx="12" cy="12" r="9"/><path d="M8 8l8 8"/>',
+  'zoom': '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5M11 8v6M8 11h6"/>',
+  'rotate': '<path d="M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5"/>',
+  'info': '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
+  'bolt': '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
+  'undo': '<path d="M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3"/>',
+  'tag': '<path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1"/>',
+  'pin': '<path d="M12 21s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="9" r="2.5"/>',
+  'grid': '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>',
+  'list': '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+};
+const ic = (n, c = '') => `<svg class="ic ${c}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n] || ''}</svg>`;
+
+const chip = (k, lg) => k === 'running' ? `<span class="chip s-running ${lg ? 'lg' : ''}">${ic('spinner', 'spin')}Running</span>` : `<span class="chip s-${k} ${lg ? 'lg' : ''}">${ic(OUT[k].ic)}${OUT[k].label}</span>`;
+const confClass = c => c == null ? 'na' : c >= 0.90 ? 'hi' : c >= 0.75 ? 'mid' : 'lo';
+const confChip = (c, extra = '') => `<span class="conf ${confClass(c)}" title="Confidence ${c == null ? 'not applicable' : c.toFixed(2)}">${c == null ? 'n/a' : c.toFixed(2)}${extra}</span>`;
+const sevIcon = s => ({ pass: ic('check-circle', 'c-pass'), note: ic('note-circle', 'c-note'), review: ic('eye', 'c-review'), hold: ic('pause-circle', 'c-hold'), reject: ic('x-circle', 'c-reject') }[s]);
+const sevChip = s => s === 'pass' ? `<span class="chip s-pass">${ic('check-circle')}Pass</span>` : `<span class="chip s-${s === 'note' ? 'note' : s}">${ic(OUT[s === 'note' ? 'note' : s].ic)}${({ note: 'Note', review: 'Review', hold: 'Hold', reject: 'Reject' })[s]}</span>`;
+const SEVRANK = { pass: 0, note: 1, review: 2, hold: 3, reject: 4 };
+const SEV2OUT = { pass: 'auto', note: 'note', review: 'review', hold: 'hold', reject: 'reject' };
+const worst = arr => arr.reduce((m, s) => SEVRANK[s] > SEVRANK[m] ? s : m, 'pass');
+
+/* tooltips and popovers */
+let tipEl, popEl;
+function ensureFloaters() {
+  if (!tipEl) { tipEl = document.createElement('div'); tipEl.className = 'tip'; tipEl.setAttribute('role', 'tooltip'); document.body.appendChild(tipEl); }
+  if (!popEl) { popEl = document.createElement('div'); popEl.className = 'pop'; document.body.appendChild(popEl); }
+}
+function placeFloat(el, x, y, pad = 14) {
+  const w = el.offsetWidth, h = el.offsetHeight; let left = x + pad, top = y + pad;
+  if (left + w > innerWidth - 8) left = x - w - pad; if (left < 8) left = 8;
+  if (top + h > innerHeight - 8) top = y - h - pad; if (top < 8) top = 8;
+  el.style.left = left + 'px'; el.style.top = top + 'px';
+}
+document.addEventListener('mousemove', e => {
+  ensureFloaters();
+  const t = e.target.closest ? e.target.closest('[data-tip]') : null;
+  if (t) { tipEl.innerHTML = t.dataset.tip; tipEl.classList.add('show'); placeFloat(tipEl, e.clientX, e.clientY); } else tipEl.classList.remove('show');
+  const p = e.target.closest ? e.target.closest('[data-pop]') : null;
+  if (p) { popEl.innerHTML = p.dataset.pop; popEl.classList.add('show'); placeFloat(popEl, e.clientX, e.clientY, 18); } else popEl.classList.remove('show');
+});
+document.addEventListener('scroll', () => { tipEl && tipEl.classList.remove('show'); popEl && popEl.classList.remove('show'); }, true);
+
+/* toasts */
+function toast(msg, undo) {
+  let c = $('.toasts'); if (!c) { c = document.createElement('div'); c.className = 'toasts'; c.setAttribute('role', 'status'); c.setAttribute('aria-live', 'polite'); document.body.appendChild(c); }
+  const t = document.createElement('div'); t.className = 'toast';
+  t.innerHTML = `<span>${msg}</span>${undo ? '<button data-undo>Undo</button>' : ''}`;
+  c.appendChild(t);
+  const kill = () => t.remove(); const to = setTimeout(kill, undo ? 10000 : 4200);
+  if (undo) $('[data-undo]', t).onclick = () => { clearTimeout(to); kill(); undo(); };
+}
+function copyText(txt, label) {
+  const done = () => toast((label || 'Text') + ' copied to the clipboard');
+  try { navigator.clipboard.writeText(txt).then(done, () => { fallbackCopy(txt); done(); }); } catch (e) { fallbackCopy(txt); done(); }
+}
+function fallbackCopy(txt) { const ta = document.createElement('textarea'); ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch (e) { } ta.remove(); }
+
+/* sheet and modal containers */
+function openSheet(html, wide) {
+  closeSheet(true);
+  const sc = document.createElement('div'); sc.className = 'scrim'; sc.id = 'scrim'; sc.onclick = () => closeSheet();
+  const sh = document.createElement('aside'); sh.className = 'sheet' + (wide ? ' wide' : ''); sh.id = 'sheet'; sh.setAttribute('role', 'dialog'); sh.setAttribute('aria-modal', 'true'); sh.innerHTML = html;
+  document.body.append(sc, sh); requestAnimationFrame(() => { sc.classList.add('show'); sh.classList.add('show'); });
+  return sh;
+}
+function closeSheet(now) {
+  const sc = $('#scrim'), sh = $('#sheet'); if (!sh) return;
+  sc.classList.remove('show'); sh.classList.remove('show');
+  const rm = () => { sc.remove(); sh.remove(); }; now ? rm() : setTimeout(rm, 260);
+}
+function openModal(html) {
+  closeModal(true);
+  const sc = document.createElement('div'); sc.className = 'scrim'; sc.id = 'mscrim'; sc.onclick = () => closeModal();
+  const m = document.createElement('div'); m.className = 'modal'; m.id = 'modal'; m.setAttribute('role', 'dialog'); m.setAttribute('aria-modal', 'true'); m.innerHTML = html;
+  document.body.append(sc, m); requestAnimationFrame(() => { sc.classList.add('show'); m.classList.add('show'); });
+}
+function closeModal(now) { const sc = $('#mscrim'), m = $('#modal'); if (!m) return; sc.classList.remove('show'); m.classList.remove('show'); const rm = () => { sc.remove(); m.remove(); }; now ? rm() : setTimeout(rm, 220); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeSheet(); closeModal(); } });
+
+/* delegated actions */
+const ACT = {};
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-act]'); if (!t) return;
+  const a = ACT[t.dataset.act]; if (a) { if (t.tagName === 'A' && !t.getAttribute('href')) e.preventDefault(); a(t, e); }
+});
+
+/* layout atoms */
+const pageHead = (title, sub, right = '') => `<div class="page-head"><div class="grow"><h1>${title}</h1>${sub ? `<p>${sub}</p>` : ''}</div><div class="row wrap">${right}</div></div>`;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const sum = a => a.reduce((s, x) => s + x, 0);
+const median = a => { const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length ? (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) : 0; };
+const pct = (n, d = 1) => (Math.round(n * Math.pow(10, d)) / Math.pow(10, d)).toFixed(d) + '%';
+const dayAge = d => Math.max(0, Math.round((TODAY - d) / 86400000));
+
+/* ===== Builds the full detail model for one invoice (fields, rules, PO match, vendor, duplicate, drafts) ===== */
+const BAND_NOTE = 'allowed: up to 0.5% or ₹50 passes; up to 2% and ₹5,000 gets a note';
+function PR(il, pl, ord, bb, ti, pp, ip, note) {
+  const rem = ord - bb, over = Math.max(0, ti - rem), dp = pp ? (ip - pp) / pp : 0;
+  const av = over * pp + ti * (ip - pp);
+  let sev = 'pass';
+  if (ti === 0) sev = 'none';
+  else if (over > 0) { const p = over / ord; sev = p <= 0.005 ? 'pass' : p <= 0.02 && over * pp <= 5000 ? 'note' : p <= 0.10 ? 'review' : 'reject'; }
+  else if (Math.abs(dp) > 0.005) sev = Math.abs(dp) <= 0.02 ? 'note' : Math.abs(dp) <= 0.10 ? 'review' : 'reject';
+  return { il, pl, ord, bb, ti, rem, pp, ip, dp, av, sev: note && note.sev || sev, over, note: note && note.t };
+}
+const NAMED_ROWS = {
+  bl0377: () => [PR('Copier paper A4 75gsm', 'CP-A4-75', 400, 0, 400, 250, 250)],
+  k1187: () => [PR('Corrugated shipping carton, large', 'CTN-L', 10000, 0, 4000, 40, 40), PR('Custom print setup', 'SETUP-01', 1, 0, 1, 20000, 20000)],
+  k1203: () => [PR('Corrugated shipping carton, large', 'CTN-L', 10000, 4000, 3500, 40, 40), PR('', 'SETUP-01', 1, 1, 0, 20000, 20000)],
+  si01: () => [PR('Ergonomic mesh chair', 'CH-ERG-01', 40, 0, 40, 6500, 6500), PR('Height-adjustable standing desk', 'DK-STD-02', 20, 0, 20, 12000, 12000)],
+  si02: () => [PR('IT peripherals supply (bundle)', 'DS-USB-C + KM-W1', 60, 0, 60, 4500, 4567.5, { sev: 'note', t: 'Bundle matched across 2 PO lines: 30 docking stations at ₹7,200 plus 30 keyboard-mouse sets at ₹1,800. Billed ₹2,74,050 against ₹2,70,000.' })],
+  si03: () => [PR('Corrugated shipping carton, large', 'CTN-L', 10000, 7500, 3000, 40, 40), PR('', 'SETUP-01', 1, 1, 0, 20000, 20000)],
+  si04: () => [PR('Copier paper A4 75gsm', 'CP-A4-75', 400, 400, 400, 250, 250)],
+  si05: () => [PR('Tea premix', 'PNT-TEA', 200, 0, 150, 420, 420), PR('Sugar', 'PNT-SUG', 300, 0, 250, 48, 48)],
+  si06: () => [PR('24-port managed switch', 'NS-24P', 6, 0, 6, 21000, 21000), PR('Cat6 patch cable 2 m', 'PC-CAT6', 60, 0, 60, 250, 250)],
+  si07: () => [PR('Full-truck freight Mumbai to Pune', 'FR-MUM-PUN', 12, 0, 12, 14500, 14500)],
+};
+
+function synRule(inv) {   /* which single rule drives a synthetic invoice */
+  const o = inv.outcome, c = inv.cat, r = inv.reason;
+  if (o === 'auto') return null;
+  if (o === 'note') { const id = /Price/.test(r) ? 'R10' : /PO inferred/.test(r) ? 'R07' : /Quantity/.test(r) ? 'R11' : /GST/.test(r) ? 'R13' : /older/.test(r) ? 'R03' : 'R02'; return [id, 'note', r]; }
+  if (c === 'Quantity or price above PO') return [/Quantity|boxes|trips/.test(r) ? 'R11' : 'R10', o, r];
+  if (c === 'Duplicate') return ['R06', o, r];
+  if (c === 'Vendor problem') return [/PO belongs/.test(r) ? 'R07' : 'R04', o, r];
+  if (c === 'Tax or total') return ['R13', o, r];
+  if (c === 'Missing information') return [/date/.test(r) ? 'R01' : /Total/.test(r) ? 'R02' : 'R07', o, r];
+  if (c === 'Bank change') return ['R05', o, r];
+  return ['R02', o, r];
+}
+
+function defRule(id, inv, d) {
+  const v = V(inv.vendor), g = inv.gross;
+  const M = {
+    R01: 'Invoice number, date, vendor, total and currency are all present.',
+    R02: `All key fields were read with confidence of 0.90 or more (lowest ${inv.conf.toFixed(2)}).`,
+    R03: `Invoice date ${inv.date} is not in the future and is after the PO date.`,
+    R04: `${v.short} is an approved vendor (matched by GSTIN ${v.gstin}).`,
+    R05: v.acct ? `Bank account ending ${v.acct.slice(-4)} on the invoice matches the account on file.` : 'No bank details on the invoice. Nothing to compare.',
+    R06: `Not similar to any earlier invoice (highest similarity ${d.dup.score.toFixed(2)}, allowed below 0.60).`,
+    R07: `${inv.po} was written on the invoice and belongs to ${v.short}.`,
+    R08: `${inv.poInferred || inv.po} is open and the invoice date is inside its validity window.`,
+    R09: 'Every invoice line maps to a line on the PO.',
+    R10: 'Unit prices match the PO.',
+    R11: 'Quantities are within what remains on the PO.',
+    R12: 'Invoice value fits within the PO value remaining.',
+    R13: `GST of ${inr(inv.tax)} is correct at ${inv.rate}%.`,
+    R14: `Subtotal ${inr(inv.sub)} plus tax ${inr(inv.tax)} equals the total ${inr(g)}.`,
+    R15: g > 1000000 ? `Total ${inr(g)} is above ₹10,00,000 so a manager must sign off.` : `Total ${inr(g)} is below the ₹10,00,000 manager sign-off limit.`,
+    R16: 'Invoice currency (INR) matches the PO currency.',
+  };
+  return M[id];
+}
+const ALLOWED = { R10: 'Allowed: 0.5% or ₹50 passes; 2% and ₹5,000 notes', R11: 'Allowed: 0.5% passes; 2% notes', R12: 'Allowed: 0.5% or ₹50 passes; 2% and ₹5,000 notes', R13: 'Allowed: ₹1 passes; ₹10 notes', R14: 'Allowed: ₹1 passes; ₹10 notes', R06: 'Review at 0.60, reject at 0.85', R02: 'Fine at 0.90, note at 0.75', R15: 'Limit ₹10,00,000' };
+
+function buildDetail(inv) {
+  if (inv._d) return inv._d;
+  const d = { inv };
+  const v = V(inv.vendor), sc = inv.doc === 'scanned';
+  const hi = i => Math.min(0.99, 0.965 + (i % 4) * 0.007);
+
+  /* ---- fields ---- */
+  const lowKey = { si04: 'inv', si05: 'date' }[inv.key] || 'total';
+  const F = [
+    { k: 'vendor', label: 'Vendor', val: inv.vfull }, { k: 'inv', label: 'Invoice no.', val: inv.invNo }, { k: 'date', label: 'Invoice date', val: inv.date },
+    { k: 'po', label: 'PO reference', val: inv.po === '—' ? 'Not found' : inv.po }, { k: 'cur', label: 'Currency', val: 'INR' },
+    { k: 'sub', label: 'Subtotal', val: inr2(inv.sub) }, { k: 'tax', label: `Tax (GST ${inv.rate}%)`, val: inr2(inv.tax) }, { k: 'total', label: 'Total', val: inr2(inv.gross) },
+  ].map((f, i) => {
+    const base = sc ? 0.92 + (i % 3) * 0.015 : hi(i);
+    f.conf = f.k === lowKey && inv.conf < 0.9 ? inv.conf : Math.max(base, inv.conf < 0.9 ? 0.9 : inv.conf);
+    f.mc = f.conf; f.src = sc ? 'image read' : 'text layer'; if (['sub', 'tax', 'total'].includes(f.k) && !sc) f.src = 'text layer'; return f;
+  });
+  const FF = k => F.find(f => f.k === k);
+  if (inv.key === 'si02') {
+    Object.assign(FF('po'), { raw: 'Ref your PO 1002/2026', src: 'normalised from text', why: 'Written as "1002/2026" in the narrative. Matched PO-2026-1002 by serial and year.' });
+    Object.assign(FF('sub'), { src: 'calculated', why: 'Prices were tax-inclusive. Backed out GST: ₹3,23,379 ÷ 1.18 = ₹2,74,050.' }); Object.assign(FF('tax'), { src: 'calculated' });
+  }
+  if (inv.key === 'si04') Object.assign(FF('inv'), { raw: 'BL-0377-26', src: 'image read', why: 'The photo is skewed and the last digits are soft. Canonical form BL-377 (serial token 377).' });
+  if (inv.key === 'si05') {
+    Object.assign(FF('date'), { raw: '12/11/26', mc: 0.80, why: '12/11/26 could mean 12 Nov or 11 Dec. 11 Dec 2026 is in the future, so we read it as 12 Nov 2026.', amber: true });
+    Object.assign(FF('po'), { conf: null, raw: 'Not found', val: 'Not found', why: 'A RECEIVED stamp covers the PO field. Inferred PO-2026-1005 instead (see PO match).', src: 'not on invoice' });
+    Object.assign(FF('total'), { raw: '₹78,7?0', mc: 0.78, conf: 0.92, boost: true, amber: false, why: 'OCR 0.78 raised to 0.92 because the lines plus tax equal the total.' });
+    Object.assign(FF('sub'), { mc: 0.83, conf: 0.90, boost: true, why: 'Raised to 0.90 because the lines add up to this subtotal.' });
+    Object.assign(FF('tax'), { mc: 0.81, conf: 0.90, boost: true, why: 'Raised to 0.90 because subtotal plus tax equals the total.' });
+    Object.assign(FF('inv'), { conf: 0.91 }); Object.assign(FF('vendor'), { conf: 0.96, why: 'Letterhead is legible, so the vendor matches exactly.' });
+  }
+  if (inv.key === 'si06') F.push({ k: 'bankn', label: 'Bank change notice', val: 'Found in footer', conf: 0.96, mc: 0.96, src: 'text layer', why: '"Our bank details have changed with effect from 1 Nov 2026."' });
+  if (inv.cat === 'Missing information' && /date/.test(inv.reason || '')) Object.assign(FF('date'), { val: 'Missing', conf: null, src: 'not on invoice' });
+  F.forEach(f => { if (f.conf != null && f.conf < 0.9 && !f.why) { f.why = 'Low confidence read. Check this value against the document.'; f.amber = true; } if (f.conf != null && f.conf < 0.9) f.amber = f.amber !== false; });
+  d.fields = F;
+  d.lowest = Math.min(...F.filter(f => f.conf != null).map(f => f.conf));
+
+  /* ---- lines ---- */
+  d.lines = (inv.items || []).map(l => ({ desc: l[0], qty: l[1], uom: l[2], price: l[3], amt: l[4], rate: l[5] }));
+
+  /* ---- PO panel ---- */
+  const poId = inv.poInferred || inv.po; const po = PO(poId);
+  let rows = NAMED_ROWS[inv.key] ? NAMED_ROWS[inv.key]() : null;
+  if (!rows && po) {
+    const l = inv.items[0], pl = po.lines[0]; const ord = Math.ceil(l[1] * 1.7), bb = Math.round(l[1] * 0.4); let ti = l[1], ip = pl[4];
+    if (inv.cat === 'Quantity or price above PO' && /Quantity|boxes|trips/.test(inv.reason)) ti = ord - bb + 14;
+    if (inv.cat === 'Quantity or price above PO' && !/Quantity|boxes|trips/.test(inv.reason)) ip = pl[4] * (inv.outcome === 'reject' ? 1.14 : /3\.1/.test(inv.reason) ? 1.031 : 1.042);
+    rows = [PR(l[0], pl[0], ord, bb, ti, pl[4], ip)];
+  }
+  d.rows = rows || [];
+  const beforeVal = sum(d.rows.map(r => r.bb * r.pp)), thisVal = sum(d.rows.map(r => r.ti * r.ip)), totalVal = po ? poSub(po) : (sum(d.rows.map(r => r.ord * r.pp)) || inv.sub);
+  d.cum = { before: beforeVal / totalVal * 100, after: (beforeVal + thisVal) / totalVal * 100, beforeVal, thisVal, totalVal };
+  const implied = !!inv.poInferred;
+  d.po = { id: poId, obj: po, method: implied ? 'Implied' : 'Explicit', score: implied ? 0.96 : 1, runner: implied ? 0.14 : null,
+    cands: implied ? [
+      { id: 'PO-2026-1005', score: 0.96, parts: [['Item descriptions', 0.89, 0.35], ['Unit prices within 2%', 1, 0.30], ['Quantities fit remaining', 1, 0.15], ['Total fits remaining', 1, 0.10], ['PO date window', 1, 0.10]], note: 'Tea premix and sugar, prices match exactly, 150 kg of 200 and 250 kg of 300 remain.' },
+      { id: 'PO-2026-1007', score: 0.14, parts: [['Item descriptions', 0.10, 0.35], ['Unit prices within 2%', 0, 0.30], ['Quantities fit remaining', 0, 0.15], ['Total fits remaining', 0, 0.10], ['PO date window', 1, 0.10]], note: 'Paper cups and stirrers. No items in common; the invoice total exceeds this PO.' },
+    ] : null };
+
+  /* ---- vendor ---- */
+  const bankBad = inv.key === 'si06';
+  d.vendorP = { v, bankInv: inv.key === 'si05' ? null : bankBad ? { bank: 'Riverbend Co-operative Bank', acct: '5020 0091 2334 7', ifsc: 'RBCB0000412' } : { bank: v.bank, acct: v.acct, ifsc: v.ifsc }, bankFile: { bank: v.bank, acct: v.acct, ifsc: v.ifsc }, match: bankBad ? false : true, method: 'GSTIN match (decisive)' };
+  if (inv.cat === 'Vendor problem' && inv.outcome === 'review' && /name only/.test(inv.reason)) d.vendorP.method = 'Fuzzy name match only (GSTIN differs)';
+  if (/pending/i.test(inv.reason || '')) d.vendorP.status = 'Pending onboarding';
+
+  /* ---- duplicate ---- */
+  const prior = RUNS.filter(r => r.vendor === inv.vendor && r !== inv && r.time < inv.time).sort((a, b) => b.time - a.time)[0] || RUNS.find(r => r.vendor === inv.vendor && r !== inv);
+  let dup = { score: 0.08 + ((inv.invNo.length * 7) % 17) / 100, closest: prior, sigs: null };
+  if (inv.key === 'si04') {
+    const o = INV.bl0377; dup = { score: 1, closest: o, exact: false, sigs: [
+      ['Total amount', '30%', inr2(inv.gross), inr2(o.gross), true, '1.00'], ['Invoice number', '25%', 'BL-0377-26', 'BL/2026/0377', true, '1.00', 'Same prefix BL, same serial token 377'], ['Invoice date', '15%', inv.date, o.date, true, '1.00'], ['PO reference', '10%', inv.po, o.po, true, '1.00'], ['Line items', '20%', '400 reams copier paper at ₹250', '400 reams copier paper at ₹250', true, '1.00'] ] };
+  } else if (inv.cat === 'Duplicate') {
+    dup = { score: inv.outcome === 'reject' ? 1 : 0.72, closest: prior, exact: inv.outcome === 'reject', sigs: inv.outcome === 'reject' ? null : [['Total amount', '30%', inr2(inv.gross), inr2(inv.gross), true, '1.00'], ['Invoice number', '25%', inv.invNo, prior ? prior.invNo : '', false, '0.55'], ['Invoice date', '15%', inv.date, prior ? prior.date : '', false, '0.50'], ['PO reference', '10%', inv.po, inv.po, true, '1.00'], ['Line items', '20%', 'Same items', 'Partly the same', false, '0.55']] };
+  }
+  d.dup = dup;
+
+  /* ---- rules ---- */
+  const sr = inv.synth ? synRule(inv) : null; const rv = Object.assign({}, inv.rv);
+  if (sr) rv[sr[0]] = [sr[1], sr[2]];
+  if (inv.cat === 'Missing information' && !inv.synth) { }
+  d.rules = RULES.map(r => { const o = rv[r.id]; return { id: r.id, name: r.name, stage: r.stage, hard: r.hard, sev: o ? o[0] : 'pass', msg: o ? o[1] : defRule(r.id, inv, d), allowed: ALLOWED[r.id] }; });
+  d.sev = worst(d.rules.map(r => r.sev));
+  d.stageSev = n => worst(d.rules.filter(r => r.stage === n).map(r => r.sev));
+
+  /* ---- explanation ---- */
+  const dr = d.rules.filter(r => r.sev !== 'pass').sort((a, b) => SEVRANK[b.sev] - SEVRANK[a.sev]);
+  d.headline = inv.headline || ({
+    auto: 'Approved: everything checks out and it is safe to pay.',
+    note: 'Approved with a note: ' + (inv.reason || '').replace(/\.$/, '').replace(/^./, c => c.toLowerCase()) + '.',
+    review: 'Review needed: ' + (inv.reason || '').replace(/\.$/, '').replace(/^./, c => c.toLowerCase()) + '.',
+    hold: 'Hold: ' + (inv.reason || '').replace(/\.$/, '').replace(/^./, c => c.toLowerCase()) + '.',
+    reject: 'Reject: ' + (inv.reason || '').replace(/\.$/, '').replace(/^./, c => c.toLowerCase()) + '.' })[inv.outcome];
+  d.ok = inv.ok || [`${v.short} is an approved vendor`, `${poId} found and open`, 'Prices, quantities, GST and total match', 'Not a duplicate'].filter((x, i) => !(sr && ((sr[0] === 'R04' && i === 0) || (sr[0] === 'R06' && i === 3))));
+  d.attention = inv.attention || (dr.length ? dr.slice(0, 2).map(r => r.msg) : []);
+  d.next = inv.next || ({ auto: 'None needed. The invoice is in the payment queue.', note: 'None needed. The invoice is in the payment queue with the note attached.', review: inv.rec ? inv.rec + '.' : 'Review the evidence and accept or override.', hold: inv.rec ? inv.rec + '.' : 'Chase the vendor for the missing information. The invoice re-runs when it arrives.', reject: inv.rec ? inv.rec + '.' : 'Send the return notice. Nothing is paid.' })[inv.outcome];
+  d.confNote = inv.key === 'si05' ? 'Three fields were below 0.90 before arithmetic checks. The total is trusted because lines plus tax equal it.' : (d.lowest < 0.9 ? `Lowest field confidence is ${d.lowest.toFixed(2)}. Check the amber fields.` : `All fields read at ${d.lowest.toFixed(2)} or higher.`);
+
+  /* ---- drafts ---- */
+  d.draft = draftFor(inv, v);
+
+  /* ---- stage messages for the live view ---- */
+  d.stageMsg = stageMsgs(inv, d);
+  inv._d = d; return d;
+}
+
+function draftFor(inv, v) {
+  if (inv.key === 'si06') return { kind: 'verify', title: 'Drafted vendor verification request', to: 'accounts@corevolt-electronics.example', subject: 'Please confirm change of bank details (invoice CV-8902)', body: `Hello Corevolt accounts team,\n\nInvoice CV-8902 dated 13 Nov 2026 (PO-2026-1008, ₹1,66,380.00) asks us to pay Riverbend Co-operative Bank, account ending 2347.\nOur records show Harbor Union Bank, account ending 6789.\n\nBefore we can release payment, please send:\n1. A written request on company letterhead, signed by an authorised person.\n2. A bank letter or cancelled cheque for the new account.\n\nWe will also call you on the number held in our vendor file to confirm the change. No payment will be made to the new account until this is complete.\n\nThank you,\nAccounts Payable` };
+  if (inv.key === 'si04') return { kind: 'return', title: 'Drafted reply to vendor', to: 'ar@brightline-supplies.example', subject: 'Invoice BL-0377-26 was already paid', body: `Hello Brightline accounts team,\n\nThank you for your reminder. Invoice BL-0377-26 (₹1,18,000.00, dated 20 Oct 2026, PO-2026-0998) is the same invoice as BL/2026/0377, which we approved on 21 Oct and paid on 5 Nov 2026.\n\nNo further payment is due for this invoice. If you believe this is a different invoice, please reply with the invoice number, service dates and the PO it relates to.\n\nRegards,\nAccounts Payable` };
+  if (inv.key === 'si07') return { kind: 'return', title: 'Drafted return notice', to: 'billing@meridian-logistics.example', subject: 'Invoice MX-5530 needs a corrected GST amount', body: `Hello Meridian billing team,\n\nInvoice MX-5530 (PO-2026-1009) shows GST of ₹21,320.00. At 18% of the taxable value of ₹1,74,000.00 the GST should be ₹31,320.00, so the total should be ₹2,05,320.00.\n\nPlease send a corrected invoice. We cannot pay the current one because the GST must be right for input credit.\n\nRegards,\nAccounts Payable` };
+  if (inv.key === 'si03') return { kind: 'credit', title: 'Drafted credit note request', to: 'accounts@kestrelpack.example', subject: 'Credit note request for invoice K/1241 (PO-2026-1004)', body: `Hello Kestrel accounts team,\n\nWith invoices K/1187, K/1203 and K/1241 you have billed 10,500 cartons against PO-2026-1004, which allows 10,000.\n\nWe will pay K/1241 for the 2,500 cartons that remain on the order (₹1,18,000.00 with GST). Please send a credit note of ₹23,600.00 for the extra 500 cartons, or tell us if a PO change was agreed.\n\nRegards,\nAccounts Payable` };
+  if (inv.outcome === 'hold') return { kind: 'info', title: 'Drafted message to vendor', to: V(inv.vendor).short.toLowerCase() + '@vendor.example', subject: `Information needed for invoice ${inv.invNo}`, body: `Hello,\n\nWe could not process invoice ${inv.invNo} yet: ${(inv.reason || '').replace(/\.$/, '').toLowerCase()}.\n\nPlease reply with a corrected or clearer copy. We will re-check it as soon as it arrives.\n\nRegards,\nAccounts Payable` };
+  if (inv.outcome === 'reject') return { kind: 'return', title: 'Drafted return notice', to: V(inv.vendor).short.toLowerCase() + '@vendor.example', subject: `Invoice ${inv.invNo} cannot be paid as sent`, body: `Hello,\n\nInvoice ${inv.invNo} cannot be paid as it stands: ${(inv.reason || '').replace(/\.$/, '').toLowerCase()}.\n\nPlease reissue the invoice or reply if you believe this is wrong.\n\nRegards,\nAccounts Payable` };
+  return null;
+}
+
+function stageMsgs(inv, d) {
+  const v = V(inv.vendor), sc = inv.doc === 'scanned'; const rs = n => d.rules.filter(r => r.stage === n);
+  const top = n => { const l = rs(n).filter(r => r.sev !== 'pass').sort((a, b) => SEVRANK[b.sev] - SEVRANK[a.sev])[0]; return l; };
+  const m = {};
+  m[1] = sc ? (inv.photo ? 'Scanned image (phone photo), 1 page. Will read by vision.' : 'Scanned image, 1 page. Will read by vision.') : 'Text PDF, 1 page. New file, not seen before.';
+  m[2] = `Read ${d.fields.length} fields and ${d.lines.length} line item${d.lines.length > 1 ? 's' : ''}${sc ? '. Two passes agree on amounts' : ''}.`;
+  m[3] = inv.key === 'si05' ? 'Date read as 12 Nov 2026. Total confidence raised 0.78 to 0.92.' : inv.key === 'si02' ? 'Prices are tax-inclusive. Backed out GST to ₹2,74,050.' : top(3) ? top(3).msg : `All required fields present. Lowest confidence ${d.lowest.toFixed(2)}.`;
+  m[4] = inv.key === 'si06' ? 'Vendor found. Bank account differs from the master.' : inv.key === 'si05' ? 'Vendor found by GSTIN. No bank details on invoice.' : top(4) ? top(4).msg : `Vendor found: ${v.name}. Bank matches.`;
+  m[5] = inv.key === 'si04' ? 'Closest match BL/2026/0377, similarity 1.00.' : top(5) ? top(5).msg : `No earlier invoice is similar (highest ${d.dup.score.toFixed(2)}).`;
+  m[6] = inv.key === 'si05' ? 'No PO on invoice. Inferred PO-2026-1005 at 96% (runner-up 14%).' : inv.key === 'si03' ? `${d.po.id} found. ${d.cum.before.toFixed(0)}% billed before this invoice.` : top(6) ? top(6).msg : `${d.po.id} found. ${d.rows.length} line${d.rows.length > 1 ? 's' : ''} aligned.`;
+  const n7 = rs(7).filter(r => r.sev === 'pass').length; const t7 = top(7);
+  m[7] = t7 ? `${n7} of ${rs(7).length} checks passed. ${t7.name}: ${t7.sev}.` : `All ${rs(7).length} number checks passed.`;
+  m[8] = `Worst severity ${d.sev.toUpperCase()}: ${OUT[SEV2OUT[d.sev]].long}.`;
+  m[9] = d.draft ? 'Explanation written. Vendor message drafted.' : 'Explanation written.';
+  return m;
+}
+
+/* ===== S1 Dashboard ===== */
+const STATE1 = { range: 30, filters: new Set(), search: '', sort: { k: 'time', d: -1 }, page: 0 };
+const inRange = r => r.time >= new Date(TODAY.getTime() - STATE1.range * 86400000);
+const rangeRuns = () => RUNS.filter(inRange);
+
+function buckets() {
+  const n = STATE1.range; const rr = rangeRuns();
+  if (n === 7) { return Array.from({ length: 7 }, (_, i) => { const d = new Date(2026, 10, 10 + i); return { lab: fmtDS(d), s: d, e: new Date(d.getTime() + 86400000) }; }).map(b => ({ ...b, runs: rr.filter(r => r.time >= b.s && r.time < b.e) })); }
+  const out = []; for (let i = 4; i >= 0; i--) { const e = new Date(2026, 10, 17 - i * 7), s = new Date(e.getTime() - 7 * 86400000); const last = new Date(e.getTime() - 86400000); out.push({ lab: fmtDS(s) + '–' + fmtDS(last).split(' ')[0] + (s.getMonth() !== last.getMonth() ? ' ' + MON[last.getMonth()] : ''), s, e }); }
+  out[0].lab = '13–19 Oct'; out[1].lab = '20–26 Oct'; out[2].lab = '27 Oct–2 Nov'; out[3].lab = '3–9 Nov'; out[4].lab = '10–16 Nov';
+  return out.map(b => ({ ...b, runs: rr.filter(r => r.time >= b.s && r.time < b.e) }));
+}
+
+function spark(vals, color = 'var(--accent)') {
+  const w = 120, h = 26, mx = Math.max(...vals, 1), mn = Math.min(...vals, 0); const sp = mx - mn || 1;
+  const pts = vals.map((v, i) => [i / (vals.length - 1) * (w - 6) + 3, h - 4 - (v - mn) / sp * (h - 9)]);
+  const line = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join('');
+  const last = pts[pts.length - 1];
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true"><path d="${line} L${last[0]} ${h} L${pts[0][0]} ${h}Z" fill="${color}" opacity=".12"/><path d="${line}" fill="none" stroke="${color}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/><circle cx="${last[0]}" cy="${last[1]}" r="2.6" fill="${color}" stroke="var(--surface)" stroke-width="1.5"/></svg>`;
+}
+
+function kpiData() {
+  const rr = rangeRuns(), n = rr.length, c = o => rr.filter(r => r.outcome === o).length;
+  const str = n ? (c('auto') + c('note')) / n : 0;
+  const dup = sum(rr.filter(r => r.cat === 'Duplicate').map(r => r.exposure)), over = sum(rr.filter(r => r.cat === 'Quantity or price above PO').map(r => r.exposure));
+  const approved = sum(rr.filter(r => r.outcome === 'auto' || r.outcome === 'note').map(r => r.gross));
+  const bk = buckets();
+  return { n, str, med: median(rr.map(r => r.dur)), open: c('review') + c('hold'), rev: c('review'), hold: c('hold'), dup, over, protectedV: dup + over, approved, bk,
+    sN: bk.map(b => b.runs.length), sS: bk.map(b => b.runs.length ? (b.runs.filter(r => r.outcome === 'auto' || r.outcome === 'note').length / b.runs.length) * 100 : 0), sM: bk.map(b => median(b.runs.map(r => r.dur))) };
+}
+
+function chartStack(k) {
+  const bk = k.bk, W = 600, H = 250, L = 34, Rr = 8, T = 10, B = 40;
+  const mx = Math.max(...bk.map(b => b.runs.length), 4), step = mx <= 8 ? 2 : mx <= 20 ? 5 : 10, top = Math.ceil(mx / step) * step;
+  const iw = W - L - Rr, ih = H - T - B, bw = Math.min(54, iw / bk.length * .56);
+  let s = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Decisions per period by outcome">`;
+  for (let v = 0; v <= top; v += step) { const y = T + ih - v / top * ih; s += `<line class="gl" x1="${L}" x2="${W - Rr}" y1="${y}" y2="${y}"/><text x="${L - 8}" y="${y + 4}" text-anchor="end">${v}</text>`; }
+  bk.forEach((b, i) => {
+    const cx = L + iw / bk.length * (i + .5); let y0 = T + ih;
+    OUT_KEYS.forEach(o => {
+      const cnt = b.runs.filter(r => r.outcome === o).length; if (!cnt) return; const hh = cnt / top * ih;
+      s += `<rect class="seg-r" x="${cx - bw / 2}" y="${y0 - hh}" width="${bw}" height="${hh}" rx="2" fill="${OUT_COLOR[o]}" data-act="segFilter" data-o="${o}" data-tip="<b>${b.lab}</b><br>${OUT[o].label}: ${cnt}<br><span style='opacity:.75'>Click to filter the table</span>"/>`;
+      if (hh > 15) s += `<text x="${cx}" y="${y0 - hh / 2 + 4}" text-anchor="middle" style="fill:#fff;font-weight:700;pointer-events:none">${cnt}</text>`;
+      y0 -= hh;
+    });
+    s += `<text x="${cx}" y="${H - 20}" text-anchor="middle">${b.lab}</text><text x="${cx}" y="${H - 6}" text-anchor="middle" style="font-weight:700;fill:var(--ink-2)">${b.runs.length} total</text>`;
+  });
+  return s + '</svg>';
+}
+function chartDonut(rr) {
+  const tot = rr.length || 1, R0 = 62, sw = 24, C = 2 * Math.PI * R0; let off = 0, arcs = '';
+  OUT_KEYS.forEach(o => { const c = rr.filter(r => r.outcome === o).length; if (!c) return; const len = c / tot * C; arcs += `<circle class="seg-r" cx="90" cy="90" r="${R0}" fill="none" style="stroke:${OUT_COLOR[o]};stroke-width:${sw}px;stroke-linecap:butt" stroke-dasharray="${Math.max(len - 2.5, 0.5)} ${C}" stroke-dashoffset="${-off}" transform="rotate(-90 90 90)" data-act="segFilter" data-o="${o}" data-tip="<b>${OUT[o].label}</b><br>${c} invoices (${pct(c / tot * 100, 0)})"/>`; off += len; });
+  const legend = OUT_KEYS.map(o => { const c = rr.filter(r => r.outcome === o).length; return `<div class="row" style="justify-content:space-between;gap:12px"><span class="row gap-s"><i style="width:10px;height:10px;border-radius:3px;background:${OUT_COLOR[o]};display:inline-block"></i>${OUT[o].label}</span><span class="num"><b>${c}</b> <span class="muted">${pct(c / tot * 100, 0)}</span></span></div>`; }).join('');
+  return `<div class="row wrap" style="gap:22px;justify-content:center"><svg class="chart" viewBox="0 0 180 180" style="width:170px;flex:none" role="img" aria-label="Outcome mix donut">${arcs}<text x="90" y="88" text-anchor="middle" style="font-family:var(--f-head);font-size:28px;font-weight:800;fill:var(--ink)">${rr.length}</text><text x="90" y="106" text-anchor="middle">invoices</text></svg><div class="stack-s grow" style="min-width:170px;font-size:13px">${legend}</div></div>`;
+}
+function chartReasons(rr) {
+  const cats = {}; rr.filter(r => r.cat).forEach(r => cats[r.cat] = (cats[r.cat] || 0) + 1);
+  const items = Object.entries(cats).sort((a, b) => b[1] - a[1]); const mx = Math.max(...items.map(i => i[1]), 1);
+  const W = 520, rowH = 34, H = items.length * rowH + 4, lab = 190;
+  let s = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Top reasons for exceptions">`;
+  items.forEach(([c, n], i) => { const y = i * rowH + 4, bw = Math.max(6, n / mx * (W - lab - 44)); s += `<text x="0" y="${y + 17}" style="fill:var(--ink-2);font-size:12.5px">${esc(c)}</text><rect x="${lab}" y="${y + 5}" width="${W - lab - 44}" height="16" rx="4" fill="var(--surface-3)"/><rect class="seg-r" x="${lab}" y="${y + 5}" width="${bw}" height="16" rx="4" fill="var(--accent)" style="stroke:none" data-tip="<b>${esc(c)}</b><br>${n} invoices"/><text x="${lab + bw + 8}" y="${y + 18}" style="fill:var(--ink);font-weight:700;font-size:12.5px">${n}</text>`; });
+  return s + '</svg>';
+}
+function chartLine(k) {
+  const bk = k.bk, W = 520, H = 220, L = 34, Rr = 14, T = 14, B = 30, iw = W - L - Rr, ih = H - T - B; const vals = k.sM.map(v => v || null);
+  const mn = 8, mx = 20; const X = i => L + (bk.length === 1 ? iw / 2 : i / (bk.length - 1) * iw), Y = v => T + ih - (v - mn) / (mx - mn) * ih;
+  let s = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Median time to decision">`;
+  [8, 12, 16, 20].forEach(v => { const y = Y(v); s += `<line class="gl" x1="${L}" x2="${W - Rr}" y1="${y}" y2="${y}"/><text x="${L - 8}" y="${y + 4}" text-anchor="end">${v}s</text>`; });
+  const pts = vals.map((v, i) => v == null ? null : [X(i), Y(clamp(v, mn, mx))]).filter(Boolean);
+  if (pts.length > 1) { const path = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(''); s += `<path d="${path}L${pts[pts.length - 1][0]} ${T + ih}L${pts[0][0]} ${T + ih}Z" fill="var(--accent)" opacity=".1"/><path d="${path}" fill="none" stroke="var(--accent)" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>`; }
+  bk.forEach((b, i) => { s += `<text x="${X(i)}" y="${H - 8}" text-anchor="middle">${b.lab.length > 9 && bk.length === 5 ? b.lab : b.lab}</text>`; });
+  vals.forEach((v, i) => { if (v == null) return; const last = i === vals.length - 1; s += `<circle cx="${X(i)}" cy="${Y(clamp(v, mn, mx))}" r="${last ? 5.5 : 4}" fill="var(--accent)" stroke="var(--surface)" stroke-width="2" data-tip="<b>${bk[i].lab}</b><br>Median ${v.toFixed(0)} s (${bk[i].runs.length} runs)"/>`; if (last) s += `<text x="${X(i)}" y="${Y(clamp(v, mn, mx)) - 12}" text-anchor="middle" style="fill:var(--ink);font-weight:700;font-size:12px">${v.toFixed(0)} s</text>`; });
+  return s + '</svg>';
+}
+
+function renderS1() {
+  const k = kpiData(), all = RUNS, cAll = COUNTS();
+  const oldest = Math.max(...OPEN_EXC().map(r => r.age));
+  const d = { 7: ['+9%', '+3 pts', '−1 s'], 30: ['+12%', '+4 pts', '−2 s'], 90: ['+12%', '+4 pts', '−2 s'] }[STATE1.range];
+  const tip = `<b>Value protected</b><br>Duplicates blocked or held: ${inr(k.dup)}<br>Overbilling caught: ${inr(k.over)}`;
+  return `
+  ${pageHead('Dashboard', 'How accounts payable is doing, and what needs a person.', `
+    <div class="seg" role="group" aria-label="Date range">${[7, 30, 90].map(n => `<button aria-pressed="${STATE1.range === n}" data-act="range" data-n="${n}">${n} days</button>`).join('')}</div>
+    <button class="btn" data-act="exportCsv">${ic('download')}Export approved (CSV)</button>
+    <a class="btn primary" href="#s2">${ic('plus')}Process invoice</a>`)}
+  <div class="stack">
+    <div class="banner" role="status">${ic('eye', 'lg')}<span class="grow"><b>${cAll.review} invoices need review, ${cAll.hold} on hold, oldest ${oldest} days.</b> The largest open exposure is ${inr(Math.max(...OPEN_EXC().map(r => r.exposure)))}.</span><a href="#s5">Open the review queue</a></div>
+    <div class="kpis">
+      <div class="card kpi"><div class="lab">Invoices processed</div><div class="val num">${k.n}</div><div class="sub"><span class="delta up">▲ ${d[0]}</span> vs previous ${STATE1.range} days</div>${spark(k.sN)}</div>
+      <div class="card kpi hero"><div class="lab">Straight-through rate</div><div class="val num">${(k.str * 100).toFixed(0)}<small>%</small></div><div class="sub"><span class="delta up">▲ ${d[1]}</span> approved with no human touch</div>${spark(k.sS)}</div>
+      <div class="card kpi"><div class="lab">Median time to decision</div><div class="val num">${k.med.toFixed(0)}<small>s</small></div><div class="sub"><span class="delta up">▼ ${d[2]}</span> est. 9 min by hand</div>${spark(k.sM)}</div>
+      <div class="card kpi"><div class="lab">Open exceptions</div><div class="val num">${k.open}</div><div class="sub">${k.rev} to review · ${k.hold} on hold</div><div class="bar" style="margin-top:8px"><i style="width:${k.n ? k.open / k.n * 100 : 0}%;background:var(--review)"></i></div></div>
+      <div class="card kpi" data-tip="${esc(tip)}"><div class="lab">Value protected ${ic('info', 'sm')}</div><div class="val num">${inr(k.protectedV)}</div><div class="sub">Duplicates and overbilling stopped</div></div>
+      <div class="card kpi"><div class="lab">Value approved</div><div class="val num">${k.approved >= 10000000 ? '₹' + (k.approved / 10000000).toFixed(2) + '<small>Cr</small>' : k.approved >= 100000 ? '₹' + (k.approved / 100000).toFixed(1) + '<small>lakh</small>' : inr(k.approved)}</div><div class="sub">Gross, in the payment queue</div></div>
+    </div>
+    <div class="chart-grid">
+      <div class="card cg-7"><div class="card-h"><h3>Decisions ${STATE1.range === 7 ? 'per day' : 'per week'}</h3><div class="legend right">${OUT_KEYS.map(o => `<span><i style="background:${OUT_COLOR[o]}"></i>${OUT[o].label}</span>`).join('')}</div></div><div class="card-b">${chartStack(k)}</div></div>
+      <div class="card cg-5"><div class="card-h"><h3>Outcome mix</h3><span class="muted small right">Click a slice to filter</span></div><div class="card-b" style="padding-top:22px">${chartDonut(rangeRuns())}</div></div>
+      <div class="card cg-7"><div class="card-h"><h3>Top reasons for exceptions</h3><span class="muted small right">Review, hold and reject</span></div><div class="card-b">${chartReasons(rangeRuns())}</div></div>
+      <div class="card cg-5"><div class="card-h"><h3>Median time to decision</h3><span class="muted small right">Manual baseline: 9 min (est.)</span></div><div class="card-b">${chartLine(k)}</div></div>
+    </div>
+    <div class="card" id="runs-card"></div>
+  </div>`;
+}
+
+const REASON_COLS = [['time', 'Run'], ['vname', 'Vendor'], ['invNo', 'Invoice no.'], ['po', 'PO'], ['gross', 'Amount'], ['outcome', 'Decision'], ['reason', 'Main reason'], ['conf', 'Confidence'], ['dur', 'Duration'], ['ovr', 'Edited']];
+function filteredRuns() {
+  let rr = rangeRuns(); const f = STATE1.filters;
+  if (f.size) rr = rr.filter(r => f.has(r.outcome));
+  const q = STATE1.search.trim().toLowerCase();
+  if (q) rr = rr.filter(r => (r.vfull + ' ' + r.invNo + ' ' + (r.poInferred || r.po)).toLowerCase().includes(q));
+  const { k, d } = STATE1.sort; const val = r => k === 'ovr' ? (r.overridden ? 1 : 0) : k === 'outcome' ? OUT[r.outcome].rank : k === 'po' ? r.po : r[k];
+  return rr.slice().sort((a, b) => { const x = val(a), y = val(b); return (x > y ? 1 : x < y ? -1 : 0) * d; });
+}
+function renderRunsCard() {
+  const el = $('#runs-card'); if (!el) return;
+  const base = rangeRuns(), rr = filteredRuns(), pages = Math.max(1, Math.ceil(rr.length / 25)); STATE1.page = clamp(STATE1.page, 0, pages - 1);
+  const slice = rr.slice(STATE1.page * 25, STATE1.page * 25 + 25);
+  const cnt = o => base.filter(r => r.outcome === o).length; const f = STATE1.filters;
+  const chips = `<button class="fchip ${f.size ? '' : 'on'}" data-act="chipAll">All <span class="n">${base.length}</span></button>` + OUT_KEYS.map(o => `<button class="fchip ${f.has(o) ? 'on' : ''}" data-act="chip" data-o="${o}" aria-pressed="${f.has(o)}">${ic(OUT[o].ic, 'sm')}${OUT[o].label} <span class="n">${cnt(o)}</span></button>`).join('') + `<button class="fchip ${f.has('running') ? 'on' : ''}" data-act="chip" data-o="running">${ic('spinner', 'sm spin')}Running <span class="n">1</span></button>`;
+  const showRunning = !f.size || f.has('running');
+  const th = REASON_COLS.map(([k, l]) => `<th class="sortable ${k === 'gross' || k === 'dur' ? 'r' : ''}" data-act="sort" data-k="${k}">${l}${STATE1.sort.k === k ? `<span class="arr">${STATE1.sort.d > 0 ? '▲' : '▼'}</span>` : ''}</th>`).join('');
+  const runRow = showRunning && STATE1.page === 0 && !STATE1.search ? `<tr class="link sev" style="--sev:var(--accent)" data-href="#s3" data-pop="<b>Running now</b><br>Meridian Logistics invoice MX-5541 is being checked against PO-2026-1009."><td><div class="mono small">${RUNNING.run}</div><div class="tiny muted">Just now</div></td><td>${esc(RUNNING.vname)}</td><td class="mono">${RUNNING.invNo}</td><td class="mono small">${RUNNING.po}</td><td class="r num">${inr2(RUNNING.gross)}</td><td>${chip('running')}</td><td class="sec" id="run-stage">Stage 6 of 9: PO match</td><td>${confChip(null)}</td><td class="r num muted">—</td><td></td></tr>` : '';
+  const body = slice.map(r => `<tr class="link sev" style="--sev:${OUT_COLOR[r.outcome]}" data-href="#s4-${r.key}" data-pop="${esc(`<b>${OUT[r.outcome].long}</b><br>${buildDetail(r).headline}`)}">
+    <td><div class="mono small">${r.run}</div><div class="tiny muted">${fmtDS(r.time)}, ${fmtT(r.time)}</div></td>
+    <td class="nowrap">${esc(r.vname)}</td><td class="mono nowrap">${esc(r.invNo)}</td><td class="mono small nowrap">${esc(r.poInferred ? r.poInferred + '*' : r.po)}</td><td class="r num nowrap">${inr2(r.gross)}</td><td>${chip(r.outcome)}</td>
+    <td class="sec" style="min-width:230px;max-width:340px">${esc(r.reason)}</td><td>${confChip(r.conf)}</td><td class="r num muted">${r.dur} s</td><td class="c">${r.overridden ? `<span data-tip="Changed by a person">${ic('edit', 'sm c-review')}</span>` : ''}</td></tr>`).join('');
+  el.innerHTML = `<div class="card-h" style="padding-bottom:12px;flex-wrap:wrap"><h3>Runs</h3><div class="chips grow">${chips}</div><div class="search" style="width:240px"><span class="sr-only"></span>${ic('search')}<input type="search" id="run-search" placeholder="Search vendor, invoice or PO" value="${esc(STATE1.search)}" aria-label="Search runs"></div></div>
+  <div class="tbl-wrap"><table class="tbl"><thead><tr>${th}</tr></thead><tbody>${runRow}${body || `<tr><td colspan="10"><div class="empty"><h4>No runs match these filters</h4><p>Try a different status or clear the search.</p><p style="margin-top:10px"><button class="btn" data-act="clearFilters">Clear filters</button></p></div></td></tr>`}</tbody></table></div>
+  <div class="pager"><span>Showing ${slice.length} of ${rr.length} completed runs${showRunning ? ' · 1 running' : ''}</span><span class="right row gap-s"><button class="btn sm" data-act="page" data-d="-1" ${STATE1.page === 0 ? 'disabled' : ''}>Previous</button><span>Page ${STATE1.page + 1} of ${pages}</span><button class="btn sm" data-act="page" data-d="1" ${STATE1.page >= pages - 1 ? 'disabled' : ''}>Next</button><a href="#s8" style="margin-left:10px">Open the audit log</a></span></div>`;
+  const si = $('#run-search'); if (si) { si.oninput = () => { STATE1.search = si.value; STATE1.page = 0; const pos = si.selectionStart; renderRunsCard(); const n = $('#run-search'); n.focus(); n.setSelectionRange(pos, pos); }; }
+  $$('tr[data-href]', el).forEach(tr => tr.onclick = () => { location.hash = tr.dataset.href; });
+}
+function s1After() {
+  renderRunsCard();
+  const stages = ['Stage 3 of 9: Normalise', 'Stage 4 of 9: Vendor check', 'Stage 5 of 9: Duplicate check', 'Stage 6 of 9: PO match', 'Stage 7 of 9: Rules']; let i = 3;
+  S1_TIMER = setInterval(() => { const e = $('#run-stage'); if (e) { i = (i + 1) % stages.length; e.textContent = stages[i]; } }, 2200);
+}
+let S1_TIMER = null;
+ACT.range = t => { STATE1.range = +t.dataset.n; STATE1.page = 0; route(true); };
+ACT.segFilter = t => { STATE1.filters = new Set([t.dataset.o]); STATE1.page = 0; renderRunsCard(); $('#runs-card').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+ACT.chip = t => { const o = t.dataset.o; STATE1.filters.has(o) ? STATE1.filters.delete(o) : STATE1.filters.add(o); STATE1.page = 0; renderRunsCard(); };
+ACT.chipAll = () => { STATE1.filters.clear(); STATE1.page = 0; renderRunsCard(); };
+ACT.clearFilters = () => { STATE1.filters.clear(); STATE1.search = ''; renderRunsCard(); };
+ACT.sort = t => { const k = t.dataset.k; STATE1.sort = { k, d: STATE1.sort.k === k ? -STATE1.sort.d : -1 }; renderRunsCard(); };
+ACT.page = t => { STATE1.page += +t.dataset.d; renderRunsCard(); };
+ACT.exportCsv = () => { AUDIT.unshift({ ts: new Date(TODAY.getTime() + 60000), actor: { t: 'Human', n: ROLES[S.role].name }, type: 'Export', summary: 'Exported approved invoices (CSV), last ' + STATE1.range + ' days', obj: { k: 'Export', id: 'approved.csv', href: '#s1' }, outcome: null, payload: { rows: rangeRuns().filter(r => r.outcome === 'auto' || r.outcome === 'note').length, filter: 'Approved, Approved with note' } }); toast('Approved invoices exported as CSV. The export was recorded in the audit log.'); };
+
+/* ===== S2 New run ===== */
+ICONS.pause = '<path d="M9 6v12M15 6v12"/>';
+const STATE2 = { expect: false, queue: [], opts: { speed: 'Normal', cache: true } };
+const SAMPLE_KEYS = ['si01', 'si02', 'si03', 'si04', 'si05', 'si06', 'si07'];
+const HUES = { 'V-101': '#2c55d9', 'V-102': '#0b8f8f', 'V-103': '#b4531a', 'V-104': '#3c8b3c', 'V-105': '#6b4fd1' };
+
+function thumbSvg(inv) {
+  const sc = inv.doc === 'scanned', col = HUES[inv.vendor], id = 'f' + inv.key;
+  const rows = [0, 1, 2, 3].map(i => `<rect x="14" y="${62 + i * 9}" width="${70 - (i % 2) * 14}" height="3" rx="1.5" fill="#c4c9d4"/><rect x="${90}" y="${62 + i * 9}" width="22" height="3" rx="1.5" fill="#c4c9d4"/>`).join('');
+  return `<svg viewBox="0 0 126 160" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><filter id="${id}"><feGaussianBlur stdDeviation=".5"/></filter></defs>
+  <g ${sc ? `transform="rotate(${inv.photo ? -3 : 1.6} 63 80)" filter="url(#${id})"` : ''}><rect x="4" y="4" width="118" height="152" rx="3" fill="${sc ? '#e9e5d9' : '#fffefb'}" stroke="#c9cedb"/>
+  <rect x="14" y="14" width="40" height="8" rx="2" fill="${col}"/><rect x="14" y="26" width="28" height="3" rx="1.5" fill="#c4c9d4"/><rect x="82" y="14" width="30" height="5" rx="2" fill="#9aa3b5"/>
+  <rect x="14" y="44" width="98" height="1.5" fill="#9aa3b5"/>${rows}<rect x="70" y="110" width="42" height="3" rx="1.5" fill="#9aa3b5"/><rect x="82" y="118" width="30" height="5" rx="2" fill="#4b5568"/>
+  ${inv.key === 'si06' ? '<rect x="14" y="134" width="98" height="12" rx="2" fill="#f1d9d6" stroke="#d6453d" stroke-width=".6"/>' : '<rect x="14" y="138" width="60" height="3" rx="1.5" fill="#c4c9d4"/>'}
+  ${inv.key === 'si05' ? '<rect x="20" y="40" width="46" height="14" rx="2" fill="none" stroke="#b3261e" stroke-width="1.6" transform="rotate(-8 43 47)"/><ellipse cx="94" cy="116" rx="16" ry="6" fill="#222" opacity=".55"/>' : ''}</g></svg>`;
+}
+
+function renderS2() {
+  const q = STATE2.queue;
+  const cards = SAMPLE_KEYS.map(k => {
+    const i = INV[k]; const ran = RUNS.some(r => r.key === k);
+    return `<div class="card sample"><div class="thumb">${thumbSvg(i)}</div>
+      <div class="row gap-s wrap"><span class="tag">${i.code}</span><span class="tag">${V(i.vendor).short}</span>${i.doc === 'scanned' ? '<span class="pill accent">Scanned</span>' : '<span class="pill">Text PDF</span>'}${ran ? '<span class="pill" data-tip="This sample has been run before">Run before</span>' : ''}</div>
+      <div><h4>${esc(i.invNo)}</h4><p class="small sec" style="margin-top:2px">${esc(i.sampleDesc)}</p></div>
+      ${STATE2.expect ? `<div class="row gap-s small sec fade-in">Expected: ${chip(i.outcome)}</div>` : ''}
+      <button class="btn primary" data-act="runSample" data-k="${k}" style="margin-top:auto">${ic('play', 'sm')}Run this sample</button></div>`;
+  }).join('');
+  const queue = q.length ? `<div class="card flat"><div class="card-h" style="padding-bottom:6px"><h3>Upload queue</h3><span class="muted small">${q.filter(x => x.ok).length} ready</span></div>${q.map((f, i) => `<div class="q-item"><span>${ic(f.ok ? 'file' : 'warn', f.ok ? '' : 'c-reject')}</span><div class="trunc"><div class="trunc"><b>${esc(f.name)}</b></div>${f.err ? `<div class="tiny" style="color:var(--reject-fg)">${esc(f.err)}</div>` : ''}</div><div>${f.ok ? `<div class="bar"><i style="width:${f.p}%"></i></div>` : ''}</div><span class="small muted nowrap">${f.size}</span><span class="row gap-s"><span class="chip ${f.ok ? (f.p >= 100 ? 's-auto' : 's-running') : 's-reject'}">${f.ok ? (f.p >= 100 ? 'Ready' : 'Uploading') : 'Rejected'}</span><button class="icon-btn" data-act="rmq" data-i="${i}" aria-label="Remove ${esc(f.name)}">${ic('x', 'sm')}</button></span></div>`).join('')}</div>` : '';
+  return `${pageHead('New run', 'Drop an invoice or pick a sample. Ledgerlight reads it, checks it against vendor and PO data, and gives a decision with reasons. Nothing is paid or sent automatically.', `<a class="btn ghost" href="#s1">Recent runs ${ic('arrow-r', 'sm')}</a>`)}
+  <div class="stack" style="gap:18px">
+    <label class="drop" id="dropzone" for="file-in"><div class="ico">${ic('upload', 'lg')}</div><h3>Drag an invoice PDF here or <span style="color:var(--accent-fg);text-decoration:underline">browse</span></h3><p class="sec small">Up to 10 PDFs, 10 MB and 10 pages each. Scanned images and phone photos work too.</p><input id="file-in" type="file" accept="application/pdf" multiple hidden></label>
+    ${queue}
+    <details class="card" style="padding:0"><summary style="padding:13px 18px;cursor:pointer;font-weight:700;list-style:none;display:flex;gap:8px;align-items:center">${ic('sliders')}Options<span class="muted small" style="font-weight:500">Speed: ${STATE2.opts.speed} · Saved AI results: ${STATE2.opts.cache ? 'on' : 'off'}</span></summary>
+      <div class="card-b row wrap gap-l" style="border-top:1px solid var(--line)"><div class="field-l">Processing speed<div class="seg" role="group">${['Slow for demo', 'Normal', 'Fast'].map(s => `<button aria-pressed="${STATE2.opts.speed === s}" data-act="optSpeed" data-s="${s}">${s}</button>`).join('')}</div></div>
+      <label class="row" style="margin-top:18px"><button class="toggle" role="switch" aria-checked="${STATE2.opts.cache}" data-act="optCache" aria-label="Use saved AI results"></button><span><b>Use saved AI results</b><br><span class="small muted">Replays the stored extraction so a demo is repeatable and works offline.</span></span></label></div></details>
+    <div class="row wrap"><div><h2 style="font-size:18px">Sample invoices</h2><p class="sec small">Seven invoices that cover every outcome. Pick one to watch it run.</p></div>
+      <label class="row right small sec" style="cursor:pointer"><button class="toggle" role="switch" aria-checked="${STATE2.expect}" data-act="toggleExpect" aria-label="Show what to expect"></button>Show what to expect</label></div>
+    <div class="samples">${cards}</div>
+    <div class="row wrap"><button class="btn primary lg" data-act="startQueue" ${q.some(f => f.ok) ? '' : 'disabled'}>Start processing</button><span class="small muted">${q.some(f => f.ok) ? 'The first file opens in the live run view.' : 'Add a PDF or run a sample to begin.'}</span></div>
+  </div>`;
+}
+function s2After() {
+  const dz = $('#dropzone'), fi = $('#file-in'); if (!dz) return;
+  ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('over'); dz.querySelector('h3').firstChild.textContent = 'Drop to upload '; }));
+  ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('over'); }));
+  dz.addEventListener('drop', e => addFiles([...e.dataTransfer.files]));
+  fi.addEventListener('change', () => addFiles([...fi.files]));
+}
+function addFiles(files) {
+  files.slice(0, 10).forEach(f => {
+    const isPdf = /\.pdf$/i.test(f.name) || f.type === 'application/pdf'; const big = f.size > 10 * 1048576;
+    const o = { name: f.name, size: (f.size / 1048576 >= 1 ? (f.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(f.size / 1024)) + ' KB'), ok: isPdf && !big, p: 0, err: !isPdf ? 'Only PDF files are supported' : big ? 'File is larger than 10 MB' : '' };
+    STATE2.queue.push(o);
+    if (o.ok) { const iv = setInterval(() => { o.p = Math.min(100, o.p + 14 + Math.random() * 18); if (o.p >= 100) clearInterval(iv); if (location.hash.startsWith('#s2')) { const keep = $('#view').scrollTop; route(true); } }, 220); }
+  });
+  route(true);
+}
+ACT.toggleExpect = () => { STATE2.expect = !STATE2.expect; route(true); };
+ACT.optSpeed = t => { STATE2.opts.speed = t.dataset.s; RUN.speed = { 'Slow for demo': 0.5, Normal: 1, Fast: 2 }[t.dataset.s]; route(true); $('details.card').open = true; };
+ACT.optCache = () => { STATE2.opts.cache = !STATE2.opts.cache; route(true); $('details.card').open = true; };
+ACT.rmq = t => { STATE2.queue.splice(+t.dataset.i, 1); route(true); };
+ACT.runSample = t => { location.hash = '#s3-' + t.dataset.k; };
+ACT.startQueue = () => { location.hash = '#s3-si01'; };
+
+/* ===== S3 Live run view: simulated pipeline with timers ===== */
+const RUN = { tok: 0, key: 'si05', speed: 1, log: [], lf: 'all', paused: false, done: false, timers: [], t0: 0, tick: null, open: new Set() };
+const sleep = ms => new Promise(r => { RUN.timers.push(setTimeout(r, ms / RUN.speed)); });
+function stopRun() { RUN.tok++; RUN.timers.forEach(clearTimeout); RUN.timers = []; clearInterval(RUN.tick); }
+
+const SEV_NODE = { pass: 'check', note: 'check', review: 'warn', hold: 'pause', reject: 'x' };
+function stageHTML(s) {
+  return `<div class="stage pending" id="st-${s.n}" data-act="stageToggle" data-n="${s.n}"><div class="node" id="nd-${s.n}">${s.n}</div><i class="fill"></i><div class="body"><div class="t"><span>${s.name}</span><span class="dur" id="du-${s.n}"></span></div><div class="d">${s.desc}</div><div class="res" id="rs-${s.n}" hidden></div><div class="io" id="io-${s.n}"></div></div></div>`;
+}
+function renderS3(arg) {
+  const key = INV[arg] ? arg : (INV[ALIAS[arg]] ? ALIAS[arg] : 'si05'); RUN.key = key; const inv = INV[key];
+  return `
+  <div class="card run-head" id="run-head">
+    <div class="grow" style="min-width:230px"><div class="upper">Live run</div><div class="big" id="rh-title">${esc(inv.file)}</div><div class="small muted"><span class="mono">${inv.run}</span> · <span id="rh-vi">Vendor and invoice number: Reading…</span></div></div>
+    <div><div class="upper">Elapsed</div><div class="timer" id="rh-timer">0.0 s</div></div>
+    <div id="rh-conn" class="chip s-auto"><span class="live-dot" style="width:7px;height:7px"></span>Live</div>
+    <div class="row wrap">
+      <div class="seg" role="group" aria-label="Pacing speed" data-tip="Display pacing for the demo. Fast stages are slowed so you can watch them."><button data-act="pace" data-s="0.5" aria-pressed="${RUN.speed === 0.5}">0.5x</button><button data-act="pace" data-s="1" aria-pressed="${RUN.speed === 1}">1x</button><button data-act="pace" data-s="2" aria-pressed="${RUN.speed === 2}">2x</button></div>
+      <button class="btn" id="btn-cancel" data-act="cancelRun">${ic('cancel')}Cancel run</button>
+      <button class="btn" id="btn-again" data-act="runAgain">${ic('refresh')}Run again</button>
+      <a class="btn primary" id="btn-open" href="#s4-${key}" hidden>Open full decision ${ic('arrow-r')}</a>
+    </div>
+  </div>
+  <div class="live-cols">
+    <div class="card pipe" aria-label="Pipeline stages">${STAGES.map(stageHTML).join('')}</div>
+    <div class="card canvas" id="canvas">
+      <div class="row" style="align-items:flex-start;gap:14px;margin-bottom:14px">
+        <div class="docthumb ${inv.doc === 'scanned' ? 'scanned' : ''}" data-act="zoomDoc" data-tip="Click to open a larger preview"><i style="top:10px;width:30px;background:${HUES[inv.vendor]}"></i><i style="top:24px;width:44px"></i><i style="top:38px"></i><i style="top:46px"></i><i style="top:54px;width:36px"></i><i style="top:70px;width:30px;left:auto;right:8px"></i></div>
+        <div class="grow"><div class="row wrap gap-s"><h3 style="font-size:15px">Extracted fields</h3>${inv.doc === 'scanned' ? '<span class="pill accent">Scanned image</span>' : '<span class="pill">Text PDF</span>'}</div>
+        <p class="small sec" style="margin-top:3px">${inv.doc === 'scanned' ? 'We read this by looking at the image, so some values carry less confidence.' : 'Read from the text layer of the PDF and confirmed against the page image.'} Fields appear as each stage finishes.</p></div>
+      </div>
+      <div class="fgrid" id="fgrid"></div>
+      <h3 style="font-size:13.5px;margin:18px 0 8px">Line items</h3>
+      <div class="tbl-wrap"><table class="tbl lines-t"><thead><tr><th>Description</th><th class="r">Qty</th><th class="r">Unit price</th><th class="r">Amount</th><th class="r">GST</th></tr></thead><tbody id="lines"></tbody></table></div>
+      <h3 style="font-size:13.5px;margin:18px 0 8px">Bank block</h3>
+      <div class="bank" id="bankb"><div class="shimmer" style="height:14px;width:55%"></div></div>
+      <div class="decide" id="decide"></div>
+    </div>
+    <div class="log" aria-label="Streaming log">
+      <div class="log-h">${ic('scroll', 'sm')}Streaming log<span class="right row gap-s"><span class="seg" id="lf">${['all', 'info', 'pass', 'warn', 'fail'].map(l => `<button class="${RUN.lf === l ? 'on' : ''}" data-act="logFilter" data-l="${l}">${l[0].toUpperCase() + l.slice(1)}</button>`).join('')}</span><button class="icon-btn" style="background:#15213f;border-color:#2a3d6e;color:#cdd8f3;width:28px;height:28px" data-act="copyLog" aria-label="Copy log">${ic('copy', 'sm')}</button></span></div>
+      <div class="log-b" id="logb" role="log" aria-live="off"></div>
+      <div class="log-f"><span id="log-count">0 events</span><button class="btn sm ghost" id="btn-pause" data-act="pauseScroll" style="color:#9fb0d4;border-color:#2a3d6e">Pause scroll</button><span class="right">Same events as the audit log</span></div>
+    </div>
+  </div>`;
+}
+
+const LV = { info: 'info', pass: 'check-circle', warn: 'warn', fail: 'x-circle' };
+function logLine(stage, level, msg, pace) {
+  const clk = new Date(2026, 10, 16, 10, 41, 2 + Math.floor((performance.now() - RUN.t0) * RUN.speed / 1000));
+  const e = { t: pad(clk.getHours()) + ':' + pad(clk.getMinutes()) + ':' + pad(clk.getSeconds()), stage, level, msg, pace }; RUN.log.push(e); appendLog(e);
+}
+function logHTML(e) { return `<div class="ll l-${e.level} ${e.pace ? 'pace' : ''}"><span class="ts">${e.t}</span><span class="st">${e.stage ? '[S' + e.stage + ']' : '[run]'}</span>${ic(LV[e.level])}<span class="m">${esc(e.msg)}</span></div>`; }
+function appendLog(e) {
+  const b = $('#logb'); if (!b) return; $('#log-count').textContent = RUN.log.length + ' events';
+  if (RUN.lf !== 'all' && RUN.lf !== e.level) return; b.insertAdjacentHTML('beforeend', logHTML(e)); if (!RUN.paused) b.scrollTop = b.scrollHeight;
+}
+function sevOfLevel(s) { return s === 'pass' ? 'pass' : s === 'note' ? 'warn' : 'fail'; }
+
+function setStage(n, st, o = {}) {
+  const el = $('#st-' + n); if (!el) return; el.className = 'stage ' + st + (o.sev ? ' sev-' + o.sev : '') + (RUN.open.has(n) ? ' open' : '');
+  const nd = $('#nd-' + n);
+  if (st === 'running') nd.innerHTML = ic('spinner', 'spin'); else if (st === 'done') nd.innerHTML = ic(SEV_NODE[o.sev] || 'check'); else nd.textContent = n;
+  if (o.dur != null) $('#du-' + n).textContent = o.dur.toFixed(1) + ' s';
+  if (o.msg) { const r = $('#rs-' + n); r.hidden = false; r.textContent = o.msg; }
+  if (o.io) $('#io-' + n).innerHTML = o.io;
+}
+function stageIO(inv, d, n) {
+  const v = V(inv.vendor), T = rows => `<table>${rows.map(r => `<tr><td>${r[0]}</td><td>${esc(r[1])}</td></tr>`).join('')}</table>`;
+  const L = {
+    1: [[['File', inv.file], ['Source', 'Sample picker']], [['Pages', '1'], ['Document type', inv.doc === 'scanned' ? 'Scanned image' : 'Text PDF'], ['Seen before', 'No (new file hash)']]],
+    2: [[['Page images', '1 at 150 dpi'], ['Text layer', inv.doc === 'scanned' ? 'None' : 'Found']], [['Fields read', d.fields.length], ['Line items', d.lines.length], ['Lowest model confidence', Math.min(...d.fields.map(f => f.mc ?? 1)).toFixed(2)]]],
+    3: [[['Raw date', d.fields[2].raw || inv.date], ['Money', 'Read as text']], [['Invoice date', inv.date + (inv.key === 'si05' ? ' (day-first)' : '')], ['Money', 'Stored as integer paise'], ['Invoice number', 'Canonical ' + inv.invNo.replace(/[^A-Za-z0-9]/g, '').toUpperCase()], ['Lowest confidence', d.lowest.toFixed(2)]]],
+    4: [[['Vendor name', v.name], ['GSTIN', v.gstin]], [['Vendor ID', v.id], ['Status', 'Approved'], ['Bank', inv.key === 'si06' ? 'Does not match the master' : inv.key === 'si05' ? 'None on invoice' : 'Matches the master']]],
+    5: [[['History searched', '142 earlier invoices'], ['Vendor', v.short]], [['Similarity', d.dup.score.toFixed(2)], ['Closest', d.dup.closest ? d.dup.closest.invNo : 'none']]],
+    6: [[['PO reference', inv.po === '—' ? 'Not on invoice' : inv.po], ['Open POs for vendor', inv.key === 'si05' ? '2' : '1+']], [['PO', d.po.id], ['Method', d.po.method + (d.po.method === 'Implied' ? ' (96%, runner-up 14%)' : '')], ['Lines aligned', d.rows.filter(r => r.ti).length], ['Billed before', d.cum.before.toFixed(0) + '% of PO']]],
+    7: [[['Aligned lines', d.rows.filter(r => r.ti).length], ['Rule set', 'Version 14']], [['Passed', d.rules.filter(r => r.stage === 7 && r.sev === 'pass').length + ' of 7'], ['Flagged', d.rules.filter(r => r.stage === 7 && r.sev !== 'pass').map(r => r.id).join(', ') || 'none']]],
+    8: [[['Rule results', '16'], ['Rule', 'Worst severity wins']], [['Decision', OUT[inv.outcome].long], ['Driving rules', d.rules.filter(r => r.sev === d.sev && r.sev !== 'pass').map(r => r.id).join(', ') || 'none'], ['Exposure', inv.exposure ? inr(inv.exposure) : 'None']]],
+    9: [[['Decision', OUT[inv.outcome].long], ['Facts', 'Rule results only']], [['Headline', d.headline], ['Draft', d.draft ? d.draft.title : 'None needed']]],
+  }[n];
+  const rl = d.rules.filter(r => r.stage === n);
+  return `<h5>Input</h5>${T(L[0])}<h5>Output</h5>${T(L[1])}${rl.length ? `<h5>Rules at this stage</h5>${rl.map(r => `<div class="rl">${sevIcon(r.sev)}<span>${esc(r.name)}<span class="rid">${r.id}</span></span></div>`).join('')}` : ''}`;
+}
+
+function fieldCard(f, i, state) {
+  if (state === 'empty') return `<div class="fcard empty" id="fc-${i}"><div class="l">${f.label}</div><div class="v shimmer"></div></div>`;
+  const shown = state === 'raw' ? (f.raw || f.val) : f.val, c = state === 'raw' ? f.mc : f.conf;
+  const amber = state === 'norm' && (f.amber || (c != null && c < 0.9));
+  const tipw = state === 'norm' && f.why ? ` data-tip="${esc(f.why)}"` : '';
+  return `<div class="fcard ${amber ? 'amber' : ''}" id="fc-${i}"${tipw}><div class="l"><span>${f.label}</span><span class="row gap-s">${state === 'norm' && f.boost ? '<span class="boost">raised</span>' : ''}${confChip(c)}</span></div><div class="v">${esc(shown)}</div>${state === 'norm' && f.why && (amber || f.boost) ? `<div class="why">${esc(f.why)}</div>` : ''}</div>`;
+}
+
+async function runPipeline(key) {
+  stopRun(); const tok = ++RUN.tok; const inv = INV[key], d = buildDetail(inv), v = V(inv.vendor); const alive = () => RUN.tok === tok;
+  RUN.log = []; RUN.done = false; RUN.t0 = performance.now();
+  const g = id => $(id);
+  g('#logb').innerHTML = ''; g('#log-count').textContent = '0 events';
+  g('#fgrid').innerHTML = d.fields.map((f, i) => fieldCard(f, i, 'empty')).join(''); g('#lines').innerHTML = ''; g('#bankb').innerHTML = '<div class="shimmer" style="height:14px;width:55%"></div>';
+  g('#decide').classList.remove('show'); g('#decide').className = 'decide'; g('#btn-open').hidden = true; g('#btn-cancel').hidden = false; g('#rh-vi').textContent = 'Vendor and invoice number: Reading…';
+  const conn = g('#rh-conn'); conn.className = 'chip s-auto'; conn.innerHTML = '<span class="live-dot" style="width:7px;height:7px"></span>Live';
+  g('#rh-timer').textContent = '0.0 s'; STAGES.forEach(s => { setStage(s.n, 'pending'); $('#rs-' + s.n).hidden = true; $('#du-' + s.n).textContent = ''; $('#io-' + s.n).innerHTML = ''; });
+  clearInterval(RUN.tick); RUN.tick = setInterval(() => { const t = $('#rh-timer'); if (t && !RUN.done) t.textContent = ((performance.now() - RUN.t0) * RUN.speed / 1000).toFixed(1) + ' s'; }, 100);
+  logLine(0, 'info', `Run ${inv.run} started for ${inv.file}`);
+  const stage = async (n, fn) => {
+    if (!alive()) return false; const t0 = performance.now(); setStage(n, 'running'); logLine(n, 'info', `${STAGES[n - 1].name} started`); await fn(); if (!alive()) return false;
+    const sev = n === 1 || n === 2 ? 'pass' : n === 8 || n === 9 ? d.sev : d.stageSev(n);
+    setStage(n, 'done', { sev, dur: (performance.now() - t0) * RUN.speed / 1000, msg: d.stageMsg[n], io: stageIO(inv, d, n) });
+    logLine(n, sevOfLevel(sev) === 'pass' ? 'pass' : sevOfLevel(sev), d.stageMsg[n]); await sleep(120); return alive();
+  };
+  const ruleLogs = async ids => { for (const r of d.rules.filter(x => ids.includes(x.id))) { if (!alive()) return; logLine(r.stage, sevOfLevel(r.sev), `${r.id} ${r.name}: ${r.sev.toUpperCase()}. ${r.msg}`); await sleep(190); } };
+
+  if (!await stage(1, async () => {
+    await sleep(380); logLine(1, 'info', `File stored: ${inv.file} (${inv.doc === 'scanned' ? '412' : '38'} KB, 1 page)`); await sleep(360);
+    logLine(1, 'info', inv.key === 'si04' ? 'SHA-256 7be1…a90c differs from every earlier file (different image of the same invoice)' : 'SHA-256 3f9a…c1d2 not seen before'); await sleep(360);
+    logLine(1, inv.doc === 'scanned' ? 'warn' : 'pass', inv.doc === 'scanned' ? 'Fewer than 50 text characters per page: scanned image. Using vision.' : 'Text layer found. Document looks like an invoice.');
+    logLine(1, 'info', 'Display pacing: minimum 600 ms per stage', true);
+  })) return;
+
+  if (!await stage(2, async () => {
+    logLine(2, 'info', `Reading page image with vision model (vision-llm-v3${STATE2.opts.cache ? ', saved result' : ''})`); await sleep(520);
+    for (let i = 0; i < d.fields.length; i++) {
+      if (!alive()) return; const f = d.fields[i]; const el = $('#fc-' + i); if (el) { el.outerHTML = fieldCard(f, i, 'raw'); $('#fc-' + i).classList.add('pop-in'); }
+      if (f.k === 'vendor') { RUN.vtxt = inv.vname; } if (f.k === 'inv') $('#rh-vi').textContent = `${inv.vname} · invoice ${inv.invNo}`;
+      logLine(2, f.mc != null && f.mc < 0.9 ? 'warn' : 'info', `Found ${f.label}: ${f.raw || f.val} (confidence ${f.mc == null ? 'n/a' : f.mc.toFixed(2)})`); await sleep(330);
+    }
+    for (let i = 0; i < d.lines.length; i++) {
+      if (!alive()) return; const l = d.lines[i];
+      $('#lines').insertAdjacentHTML('beforeend', `<tr class="fade-in"><td>${esc(l.desc)}</td><td class="r num">${l.qty} ${l.uom}</td><td class="r num">${inr2(l.price)}</td><td class="r num">${inr2(l.amt)}</td><td class="r num">${l.rate}%</td></tr>`);
+      logLine(2, 'info', `Line ${i + 1}: ${l.desc} · ${l.qty} ${l.uom} × ${inr2(l.price)}`); await sleep(420);
+    }
+    const bi = d.vendorP.bankInv; $('#bankb').innerHTML = bi ? `<div class="fade-in"><div class="row wrap"><b>${esc(bi.bank)}</b><span class="mono small">A/c ${esc(bi.acct)}</span><span class="mono small">IFSC ${esc(bi.ifsc)}</span></div>${inv.key === 'si06' ? '<div class="small" style="margin-top:6px;color:var(--review-fg)">Footer says: "Our bank details have changed with effect from 1 Nov 2026."</div>' : ''}</div>` : '<div class="fade-in sec small">No bank details printed on this invoice.</div>';
+    logLine(2, inv.key === 'si06' ? 'warn' : 'info', bi ? `Bank block read: ${bi.bank}, account ending ${bi.acct.slice(-4)}${inv.key === 'si06' ? '. Bank change notice found.' : ''}` : 'No bank block on the invoice');
+    if (inv.doc === 'scanned') { logLine(2, 'pass', 'Second pass with a different image order: amounts agree'); await sleep(260); }
+  })) return;
+
+  if (!await stage(3, async () => {
+    await sleep(300);
+    for (let i = 0; i < d.fields.length; i++) { const f = d.fields[i]; const changed = f.raw != null || f.boost || f.amber || f.why; if (!changed) continue; if (!alive()) return; const el = $('#fc-' + i); if (el) { el.outerHTML = fieldCard(f, i, 'norm'); $('#fc-' + i).classList.add('flash'); }
+      logLine(3, f.boost ? 'pass' : f.amber ? 'warn' : 'info', f.boost ? `${f.label}: confidence ${f.mc.toFixed(2)} raised to ${f.conf.toFixed(2)} because the numbers add up` : `${f.label}: normalised to ${f.val}${f.amber ? ` (confidence ${f.conf == null ? 'n/a' : f.conf.toFixed(2)})` : ''}`); await sleep(340); }
+    d.fields.forEach((f, i) => { const el = $('#fc-' + i); if (el && !el.classList.contains('flash') && f.conf !== f.mc) { } });
+    for (let i = 0; i < d.fields.length; i++) { const f = d.fields[i]; if (!(f.raw != null || f.boost || f.amber || f.why)) { const el = $('#fc-' + i); if (el) el.outerHTML = fieldCard(f, i, 'norm'); } }
+    logLine(3, 'info', 'Money converted to integer paise. Invoice number canonical form ' + inv.invNo.replace(/[^A-Za-z0-9]/g, '').toUpperCase()); await sleep(260);
+    await ruleLogs(['R01', 'R02', 'R03']);
+  })) return;
+
+  if (!await stage(4, async () => {
+    await sleep(250); logLine(4, 'info', 'Matching vendor against the master list (6 vendors)'); await sleep(380);
+    logLine(4, 'pass', `Matched ${v.name} by GSTIN ${v.gstin}`); await sleep(300);
+    if (inv.key === 'si06') { const b = $('#bankb'); b.insertAdjacentHTML('beforeend', `<div class="row gap-s fade-in" style="margin-top:8px"><span class="chip s-hold">${ic('pause-circle')}Does not match the bank on file</span><span class="small muted">On file: ${v.bank}, A/c ending ${v.acct.slice(-4)}</span></div>`); }
+    else if (d.vendorP.bankInv) $('#bankb').insertAdjacentHTML('beforeend', `<div class="row gap-s fade-in" style="margin-top:8px"><span class="chip s-auto">${ic('check-circle')}Matches the bank on file</span></div>`);
+    await ruleLogs(['R04', 'R05']);
+  })) return;
+
+  if (!await stage(5, async () => {
+    await sleep(250); logLine(5, 'info', 'Comparing with 142 earlier invoices'); await sleep(520);
+    if (inv.key === 'si04') { logLine(5, 'warn', 'Canonical number BL-377 equals BL/2026/0377 (serial token 377)'); await sleep(300); logLine(5, 'fail', 'Closest match BL/2026/0377, similarity 1.00 (amount, number, date, PO, items all match)'); }
+    else logLine(5, d.dup.score >= 0.6 ? 'warn' : 'pass', `Closest earlier invoice ${d.dup.closest ? d.dup.closest.invNo : 'none'}, similarity ${d.dup.score.toFixed(2)}`);
+    await sleep(260); await ruleLogs(['R06']);
+  })) return;
+
+  if (!await stage(6, async () => {
+    await sleep(250);
+    if (inv.key === 'si05') {
+      logLine(6, 'warn', 'No PO reference found. Scoring the 2 open POs for Greenleaf'); await sleep(450);
+      logLine(6, 'info', 'PO-2026-1007: item descriptions 10%, prices 0% match, score 0.14'); await sleep(450);
+      logLine(6, 'pass', 'PO-2026-1005: tea and sugar at exactly the PO prices, score 0.96 (runner-up gap 0.82, needs 0.20)'); await sleep(350);
+    } else { logLine(6, 'pass', `Found ${d.po.id} on the invoice (${inv.key === 'si02' ? 'written as "1002/2026", normalised' : 'explicit match'})`); await sleep(320); }
+    for (const r of d.rows.filter(r => r.ti)) { if (!alive()) return; logLine(6, r.sev === 'pass' ? 'info' : 'warn', `Aligned "${r.il}" to ${r.pl}: ordered ${r.ord}, billed before ${r.bb}, this invoice ${r.ti}`); await sleep(260); }
+    logLine(6, d.cum.after > 100.5 ? 'warn' : 'info', `Cumulative position: ${d.cum.before.toFixed(0)}% billed before, ${d.cum.after.toFixed(0)}% after this invoice`); await sleep(280);
+    await ruleLogs(['R07', 'R08', 'R09']);
+  })) return;
+
+  if (!await stage(7, async () => { await sleep(200); await ruleLogs(['R10', 'R11', 'R12', 'R13', 'R14', 'R15', 'R16']); })) return;
+
+  if (!await stage(8, async () => { await sleep(300); logLine(8, 'info', 'Collecting 16 rule results. The worst severity wins: REJECT, HOLD, REVIEW, NOTE, PASS'); await sleep(420); logLine(8, sevOfLevel(d.sev) === 'pass' ? 'pass' : sevOfLevel(d.sev), `Worst severity ${d.sev.toUpperCase()}. Decision: ${OUT[inv.outcome].long}${inv.exposure ? '. Exposure ' + inr(inv.exposure) : ''}`); })) return;
+
+  if (!await stage(9, async () => { await sleep(300); logLine(9, 'info', 'Writing the explanation from rule facts (template, wording checked)'); await sleep(380); if (d.draft) { logLine(9, 'info', `Drafted: ${d.draft.title}. Nothing is sent automatically`); await sleep(260); } logLine(9, 'pass', 'Decision saved to the audit log'); })) return;
+
+  /* done */
+  RUN.done = true; clearInterval(RUN.tick); const el = ((performance.now() - RUN.t0) * RUN.speed / 1000);
+  $('#rh-timer').textContent = el.toFixed(1) + ' s'; logLine(0, 'pass', `Run completed in ${el.toFixed(0)} s`);
+  const dc = $('#decide'); dc.className = 'decide d-' + inv.outcome;
+  dc.innerHTML = `${chip(inv.outcome, true)}<div class="grow" style="min-width:220px"><div style="font-family:var(--f-head);font-weight:700;font-size:15px;line-height:1.35">${esc(d.headline)}</div><div class="small muted" style="margin-top:3px">Completed in ${el.toFixed(0)} s${inv.exposure ? ' · exposure ' + inr(inv.exposure) : ''}${inv.owner ? ' · assigned to ' + inv.owner : ''}</div></div><a class="btn primary" href="#s4-${key}">See the full explanation ${ic('arrow-r')}</a>`;
+  requestAnimationFrame(() => dc.classList.add('show'));
+  $('#btn-open').hidden = false; $('#btn-cancel').hidden = true; $('#canvas').dataset.state = 'done'; document.body.dataset.s3 = 'done';
+  const cn = $('#rh-conn'); if (cn) { cn.className = 'chip s-none'; cn.innerHTML = 'Completed'; }
+}
+function s3After() { document.body.dataset.s3 = 'running'; runPipeline(RUN.key); }
+
+ACT.stageToggle = t => { const n = +t.dataset.n; RUN.open.has(n) ? RUN.open.delete(n) : RUN.open.add(n); t.classList.toggle('open'); };
+ACT.runAgain = () => { document.body.dataset.s3 = 'running'; runPipeline(RUN.key); };
+ACT.cancelRun = () => { stopRun(); RUN.done = true; STAGES.forEach(s => { const e = $('#st-' + s.n); if (e && e.classList.contains('running')) { e.className = 'stage pending'; $('#nd-' + s.n).textContent = s.n; } }); logLine(0, 'warn', 'Run cancelled by user. No decision was made.'); const cn = $('#rh-conn'); cn.className = 'chip s-error'; cn.innerHTML = 'Cancelled'; $('#btn-cancel').hidden = true; document.body.dataset.s3 = 'cancelled'; };
+ACT.pace = t => { RUN.speed = +t.dataset.s; $$('[data-act="pace"]').forEach(b => b.setAttribute('aria-pressed', String(b === t))); };
+ACT.logFilter = t => { RUN.lf = t.dataset.l; $$('#lf button').forEach(b => b.classList.toggle('on', b === t)); const b = $('#logb'); b.innerHTML = RUN.log.filter(e => RUN.lf === 'all' || e.level === RUN.lf).map(logHTML).join(''); b.scrollTop = b.scrollHeight; };
+ACT.pauseScroll = t => { RUN.paused = !RUN.paused; t.textContent = RUN.paused ? 'Resume scroll' : 'Pause scroll'; };
+ACT.copyLog = () => copyText(RUN.log.map(e => `${e.t} [${e.stage ? 'S' + e.stage : 'run'}] ${e.level.toUpperCase()} ${e.msg}`).join('\n'), 'Log');
+ACT.zoomDoc = () => { const inv = INV[RUN.key]; openModal(`<div class="sheet-h"><h3>${esc(inv.file)}</h3><button class="icon-btn right" data-act="closeModal" aria-label="Close">${ic('x')}</button></div><div class="paper-wrap">${paperHTML(inv, false)}</div>`); };
+ACT.closeModal = () => closeModal();
+
+/* ===== S4 Invoice decision detail ===== */
+const ROLES = { clerk: { name: 'Priya Nair', label: 'AP Clerk' }, manager: { name: 'Rahul Mehta', label: 'AP Manager' } };
+const REASON_CODES = ['Vendor confirmed by phone', 'PO amended by Procurement', 'Credit note promised', 'Credit note requested', 'Price agreed with Procurement', 'Extraction corrected', 'Not actually a duplicate', 'Within policy for this vendor', 'Other'];
+const STATE4 = { showPassed: false, tab: 'doc', zoom: 1, hl: null };
+
+function paperHTML(inv) {
+  const d = buildDetail(inv), v = V(inv.vendor), sc = inv.doc === 'scanned', col = HUES[inv.vendor];
+  const cls = 'paper' + (sc ? ' scan' : '') + (inv.photo ? ' photo' : '');
+  const f = (k, t) => `<span data-f="${k}">${t}</span>`;
+  const incl = inv.taxIncl;
+  const lines = d.lines.map(l => `<tr><td>${esc(l.desc)}</td><td class="r">${l.qty}</td><td class="r">${inr2(l.price)}</td><td class="r">${inr2(l.amt)}</td></tr>`).join('');
+  const bi = d.vendorP.bankInv;
+  const poTxt = inv.po === '—' ? `<span style="color:#9a9a9a">—</span><span class="stamp" style="top:-8px;left:40px">RECEIVED</span>` : inv.key === 'si02' ? f('po', 'Ref your PO 1002/2026') : f('po', inv.po);
+  return `<div class="${cls}" style="--vc:${col}">
+    <div class="ph"><div><div class="vn" style="color:${col}">${esc(v.name)}</div><div style="color:#5b6477;margin-top:3px">${esc(v.addr)}<br>GSTIN ${v.gstin}</div></div><div><h5>${incl ? 'INVOICE' : 'TAX INVOICE'}</h5></div></div>
+    <div class="mm"><div><span>Invoice no.</span>${f('inv', esc(inv.invNo))}</div><div><span>Date</span>${f('date', inv.key === 'si05' ? '12/11/26' : esc(inv.date))}</div><div style="position:relative"><span>PO ref</span>${poTxt}</div><div><span>Bill to</span>Aster Industries Pvt Ltd</div><div><span>Vendor</span>${f('vendor', esc(inv.vname))}</div><div><span>Currency</span>${f('cur', 'INR')}</div></div>
+    <table><thead><tr><th>Description</th><th class="r">Qty</th><th class="r">${incl ? 'Rate (incl. GST)' : 'Rate'}</th><th class="r">Amount</th></tr></thead><tbody>${lines}</tbody></table>
+    <div class="tot"><div><span>${incl ? 'Taxable value' : 'Subtotal'}</span>${f('sub', inr2(inv.sub))}</div><div><span>GST @ ${inv.rate}%</span>${f('tax', inr2(inv.tax))}</div><div class="g" style="position:relative"><span>${incl ? 'Total (inclusive of GST)' : 'Total'}</span>${f('total', inr2(inv.gross))}${inv.key === 'si05' ? '<span class="smudge" style="right:-8px;top:-4px"></span>' : ''}</div></div>
+    ${bi ? `<div class="bk" data-f="bank"><b>Pay to</b> ${esc(bi.bank)} · A/c ${esc(bi.acct)} · IFSC ${esc(bi.ifsc)}</div>` : ''}
+    ${inv.key === 'si06' ? '<div class="foot" style="color:#8a1c14;font-weight:600">Our bank details have changed with effect from 1 Nov 2026. Please remit to Riverbend Co-operative Bank, A/c 5020 0091 2334 7.</div>' : ''}
+    <div class="foot">${incl ? 'All prices are inclusive of GST. ' : ''}Payment terms ${v.terms}. Subject to local jurisdiction. This is a computer generated invoice.</div></div>`;
+}
+const noPdf = inv => `<div class="nopdf">${ic('file', 'lg')}<b>PDF not stored for demo history</b><span class="small">This run came from the seeded history, so only the extracted data and decision are kept. Uploaded invoices keep their PDF.</span></div>`;
+
+function canOverride(inv, action) {
+  const d = buildDetail(inv), role = S.role; const hard = d.rules.some(r => r.hard && r.sev === d.sev && ['reject', 'hold'].includes(r.sev));
+  if (inv.outcome === 'auto' && action === 'approve') return { ok: false, why: 'Already approved.' };
+  if (hard) return role === 'manager' ? { ok: true } : { ok: false, why: 'This is a hard stop (' + d.rules.filter(r => r.hard && r.sev === d.sev).map(r => r.id).join(', ') + '). Only an AP manager can override it. Switch role in the top bar.' };
+  if (action === 'approve' && role === 'clerk' && !(inv.outcome === 'review' && inv.exposure <= 10000)) return { ok: false, why: 'A clerk can approve a review item only when the exposure is ₹10,000 or less. This one is ' + inr(inv.exposure) + '.' };
+  return { ok: true };
+}
+
+function decisionJSON(inv, d) {
+  return JSON.stringify({ run_id: inv.run, invoice: inv.invNo, vendor_id: inv.vendor, po: d.po.id, outcome: ({ auto: 'auto_approve', note: 'approve_with_note', review: 'route_for_review', hold: 'hold_request_info', reject: 'reject' })[inv.outcome], headline: d.headline, driving_rule_ids: d.rules.filter(r => r.sev === d.sev && r.sev !== 'pass').map(r => r.id), exposure_paise: inv.exposure * 100, assigned_to: inv.owner, made_by: inv.overridden ? 'user' : 'system', config_version: 14, rules: d.rules.map(r => ({ id: r.id, severity: r.sev, message: r.msg })) }, null, 2);
+}
+function extractionJSON(inv, d) { return JSON.stringify({ model: 'vision-llm-v3', prompt_version: 'extract-2.4', doc_type: inv.doc, fields: Object.fromEntries(d.fields.map(f => [f.k, { value: f.val, raw_text: f.raw || f.val, model_confidence: f.mc, effective_confidence: f.conf, source: f.src }])), line_items: d.lines }, null, 2); }
+
+function renderS4(arg) {
+  const key = INV[arg] ? arg : INV[ALIAS[arg]] ? ALIAS[arg] : 'si03'; const inv = INV[key], d = buildDetail(inv), v = V(inv.vendor);
+  S4KEY = key; const dsev = d.sev, sevcls = 'sev-' + inv.outcome;
+  const list = QUEUE_ORDER(); const idx = list.findIndex(r => r.key === key);
+  const ovr = inv.overridden ? `<div class="banner info" style="margin-bottom:12px">${ic('info', 'lg')}<span class="grow"><b>Decision changed from ${OUT[inv.overridden.from].label} to ${OUT[inv.outcome].label} by ${esc(inv.overridden.by)}, ${inv.overridden.when}.</b> Reason: ${esc(inv.overridden.code)}. ${esc(inv.overridden.text)} The original decision is preserved in the audit log.</span></div>` : '';
+  const meta = `<div class="meta"><span><b>${inr2(inv.gross)}</b> gross</span><span>${esc(inv.vfull)}</span><span class="mono">${esc(inv.invNo)}</span><span><a href="#s6" data-act="openPo" data-id="${d.po.id}" class="mono">${d.po.id}${inv.poInferred ? ' (inferred)' : ''}</a></span>${inv.exposure ? `<span>Exposure <b style="color:var(--${inv.outcome === 'hold' ? 'hold' : inv.outcome === 'reject' ? 'reject' : 'review'}-fg)">${inr(inv.exposure)}</b></span>` : ''}${inv.owner && ['review', 'hold', 'reject'].includes(inv.outcome) ? `<span>Assigned to <b>${inv.owner}</b></span>` : ''}${inv.outcome === 'hold' ? '<span>SLA: 3 business days</span>' : ''}<span>${inv.overridden ? 'Overridden by ' + esc(inv.overridden.by) : 'Decided by Ledgerlight at ' + fmtT(inv.time) + ' in ' + inv.dur + ' s'}${inv.confirmedBy ? ' · confirmed by ' + esc(inv.confirmedBy) : ''}</span></div>`;
+  return `
+  <div class="row wrap" style="margin-bottom:12px"><a class="btn ghost sm" href="#s1">${ic('arrow-l', 'sm')}Dashboard</a><span class="muted small">Run <span class="mono">${inv.run}</span> · ${inv.ec ? `<b style="color:var(--accent-fg)">${inv.ec}</b> · ` : ''}${fmtDS(inv.time)}, ${fmtT(inv.time)}</span>
+    <span class="right row gap-s">${idx >= 0 ? `<button class="icon-btn" data-act="navExc" data-d="-1" aria-label="Previous exception" ${idx === 0 ? 'disabled' : ''}>${ic('chev-l')}</button><span class="small muted">${idx + 1} of ${list.length} open exceptions</span><button class="icon-btn" data-act="navExc" data-d="1" aria-label="Next exception" ${idx === list.length - 1 ? 'disabled' : ''}>${ic('chev-r')}</button>` : ''}</span></div>
+  ${ovr}
+  <div class="card dcard ${sevcls}" id="dcard"><div class="grow" style="min-width:260px"><div class="row wrap gap-s" style="margin-bottom:8px">${chip(inv.outcome, true)}<span class="muted small">${OUT[inv.outcome].long}${d.rules.some(r => r.hard && r.sev === d.sev && r.sev !== 'pass') ? ' · hard stop, manager only' : ''}</span></div><h2>${esc(d.headline)}</h2>${meta}</div>
+    <div class="row wrap gap-s" style="align-self:flex-start">
+      <button class="btn" data-act="acceptDecision" ${inv.confirmedBy ? 'disabled' : ''}>${ic('check', 'sm')}${inv.confirmedBy ? 'Confirmed' : 'Accept decision'}</button>
+      <button class="btn primary" data-act="openOverride">${ic('edit', 'sm')}Override…</button>
+      <a class="btn" href="#s3-${key}">${ic('refresh', 'sm')}Re-run</a>
+      <button class="btn" data-act="copyJson">${ic('copy', 'sm')}Copy JSON</button></div></div>
+  <div class="m-tabs tabs" style="margin-top:12px"><button class="${STATE4.tab === 'doc' ? 'on' : ''}" data-act="s4tab" data-t="doc">Document</button><button class="${STATE4.tab === 'an' ? 'on' : ''}" data-act="s4tab" data-t="an">Analysis</button></div>
+  <div class="card explain" style="margin-top:14px">${explainHTML(inv, d)}</div>
+  <div class="split" data-tab="${STATE4.tab}" id="split">
+    <div class="doccol card flat" style="overflow:hidden;align-self:start"><div class="pdfcol" style="box-shadow:none">
+      <div class="pdf-bar">${ic('file', 'sm')}<span class="trunc grow">${esc(inv.file)}</span>${inv.doc === 'scanned' ? '<span class="pill accent">Scanned image</span>' : ''}<button class="icon-btn" data-act="zoom" data-d="-0.1" aria-label="Zoom out" style="width:28px;height:28px">−</button><span class="small num">${Math.round(STATE4.zoom * 100)}%</span><button class="icon-btn" data-act="zoom" data-d="0.1" aria-label="Zoom in" style="width:28px;height:28px">+</button><span class="small muted">Page 1 of ${inv.pages}</span></div>
+      <div class="paper-wrap">${inv.pdf ? `<div style="width:${STATE4.zoom * 100}%;max-width:${560 * STATE4.zoom}px">${paperHTML(inv)}</div>` : noPdf(inv)}</div></div></div>
+    <div class="stack analysis">
+      ${panelFields(inv, d)}
+      ${panelVendor(inv, d)}
+      ${panelPO(inv, d)}
+      ${panelRules(inv, d)}
+      ${panelDrafts(inv, d)}
+      ${panelActivity(inv, d)}
+      <details class="drawer"><summary>${ic('cpu', 'sm')}Technical details<span class="muted small" style="font-weight:500">Extraction and decision JSON</span></summary><pre class="json">${esc(decisionJSON(inv, d))}\n\n${esc(extractionJSON(inv, d))}</pre></details>
+    </div>
+  </div>`;
+}
+let S4KEY = 'si03';
+const QUEUE_ORDER = () => RUNS.filter(r => ['review', 'hold'].includes(r.outcome) && !r.resolved).sort((a, b) => (b.exposure * (1 + b.age)) - (a.exposure * (1 + a.age)));
+
+function explainHTML(inv, d) {
+  const li = (ico, t) => `<div class="ex-li">${ico}<span>${t}</span></div>`;
+  const att = d.attention.map(t => li(ic(inv.outcome === 'reject' ? 'x-circle' : inv.outcome === 'hold' ? 'pause-circle' : inv.outcome === 'review' ? 'eye' : 'note-circle', 'c-' + inv.outcome), esc(t))).join('');
+  const drv = d.rules.filter(r => r.sev === d.sev && r.sev !== 'pass').map(r => `<span class="rid" data-tip="${esc(r.name)}">${r.id}</span>`).join('');
+  return `<div class="ex-blk"><h4>What we checked and found OK</h4>${d.ok.map(t => li(ic('check-circle', 'c-pass'), esc(t))).join('')}</div>
+  ${att ? `<div class="ex-blk"><h4>${inv.outcome === 'note' || inv.outcome === 'auto' ? 'Please note' : 'What needs attention'} ${drv}</h4>${att}</div>` : ''}
+  <div class="ex-blk"><h4>Suggested action</h4><div class="next"><b>${esc(d.next)}</b>${inv.key === 'si03' ? `<div class="small sec" style="margin-top:8px">The part that fits: 2,500 cartons ₹1,00,000 + GST ₹18,000 = <b>₹1,18,000</b>. The part that does not: 500 cartons ₹20,000 + GST ₹3,600 = <b>₹23,600</b>.</div>` : ''}</div></div>
+  <div class="small muted row gap-s">${ic('info', 'sm')}${esc(d.confNote)}<span class="right tiny">Text is written from rule results only. Every amount comes from the checks below.</span></div>`;
+}
+
+function panelFields(inv, d) {
+  const rows = d.fields.map(f => `<tr class="${f.amber ? '' : ''}" style="${f.amber ? 'background:color-mix(in srgb,var(--review-bg) 55%,transparent)' : ''}" data-act="hlField" data-f="${f.k}"><td class="sec">${f.label}</td><td><b>${esc(f.val)}</b>${f.raw && f.raw !== f.val ? `<div class="tiny muted">Read as: ${esc(f.raw)}</div>` : ''}</td><td>${confChip(f.conf)}${f.boost ? ' <span class="boost">raised</span>' : ''}</td><td class="small sec">${f.src}${f.why ? ` <span data-tip="${esc(f.why)}" style="cursor:help">${ic('info', 'sm')}</span>` : ''}</td><td class="r"><button class="icon-btn" style="width:26px;height:26px" data-act="editField" aria-label="Edit ${f.label}">${ic('edit', 'sm')}</button></td></tr>`).join('');
+  const low = d.fields.filter(f => f.conf != null && f.conf < 0.9);
+  return `<div class="card panel"><h3>${ic('list', 'sm')}Extracted data ${low.length ? `<span class="pill" style="background:var(--review-bg);color:var(--review-fg)">${low.length} below 0.90</span>` : ''}<span class="right muted small" style="font-weight:500">Click a row to highlight it on the document</span></h3>
+  <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Field</th><th>Value</th><th>Confidence</th><th>Source</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+  <h3 style="margin:18px 0 8px;font-size:13.5px">Line items</h3><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Description</th><th class="r">Qty</th><th class="r">Unit price</th><th class="r">Amount</th><th class="r">GST</th></tr></thead><tbody>${d.lines.map(l => `<tr><td>${esc(l.desc)}</td><td class="r num">${l.qty} ${l.uom}</td><td class="r num">${inr2(l.price)}</td><td class="r num">${inr2(l.amt)}</td><td class="r num">${l.rate}%</td></tr>`).join('')}</tbody></table></div></div>`;
+}
+
+function panelVendor(inv, d) {
+  const v = V(inv.vendor), vp = d.vendorP, dup = d.dup, bad = !vp.match;
+  const bankBox = (t, b, cls) => b ? `<div class="b ${cls || ''}"><div class="upper" style="margin-bottom:4px">${t}</div><b>${esc(b.bank)}</b><div class="mono small">A/c ${bad && t.startsWith('On invoice') ? `<span class="diff">${esc(b.acct)}</span>` : esc(b.acct)}</div><div class="mono small">IFSC ${bad && t.startsWith('On invoice') ? `<span class="diff">${esc(b.ifsc)}</span>` : esc(b.ifsc)}</div></div>` : `<div class="b"><div class="upper" style="margin-bottom:4px">${t}</div><span class="sec">No bank details printed on the invoice. Nothing to compare.</span></div>`;
+  const sc = dup.score, mk = clamp(sc * 100, 1, 99);
+  const sigs = dup.sigs ? `<div class="sbs" style="margin-top:16px"><div class="doc this"><div class="upper">This invoice</div><b>${esc(inv.invNo)}</b><div class="sec">${inr2(inv.gross)} · ${inv.date}</div><div class="small muted">${inv.doc === 'scanned' ? 'Phone photo, received ' + fmtDS(inv.time) : 'Received ' + fmtDS(inv.time)}</div></div><div class="doc orig"><div class="upper">Matched earlier invoice</div><b>${esc(dup.closest.invNo)}</b> <a href="#s4-${dup.closest.key}" class="small">Open</a><div class="sec">${inr2(dup.closest.gross)} · ${dup.closest.date}</div><div class="small muted">${dup.closest.paid ? 'Approved 21 Oct, paid ' + dup.closest.paid : 'Decision: ' + OUT[dup.closest.outcome].label}</div></div></div>
+    <div style="margin-top:12px"><div class="sig h"><span>Signal</span><span>This invoice</span><span>Earlier invoice</span><span></span><span>Score</span></div>${dup.sigs.map(s => `<div class="sig"><span><b>${s[0]}</b><div class="tiny muted">weight ${s[1]}</div></span><span class="mono small">${esc(s[2])}</span><span class="mono small">${esc(s[3])}</span><span>${s[4] ? ic('check-circle', 'c-pass') : ic('x-circle', 'c-review')}</span><span class="num"><b>${s[5]}</b></span></div>${s[6] ? `<div class="tiny sec" style="margin:-4px 0 6px">${s[6]}</div>` : ''}`).join('')}</div>` : dup.exact ? `<div class="banner bad" style="margin-top:12px">${ic('x-circle')}Exact copy: the file fingerprint (SHA-256) matches a file we already processed.</div>` : '';
+  return `<div class="card panel"><h3>${ic('shield', 'sm')}Vendor and duplicate check</h3>
+    <dl class="kv" style="margin-bottom:14px"><dt>Matched vendor</dt><dd><b>${esc(v.name)}</b> <span class="muted mono small">${v.id}</span></dd><dt>Match method</dt><dd>${vp.method}</dd><dt>Status</dt><dd><span class="chip ${vp.status ? 's-hold' : 's-auto'}">${ic(vp.status ? 'pause-circle' : 'check-circle')}${vp.status || 'Approved'}</span></dd><dt>GSTIN</dt><dd class="mono small">${v.gstin}</dd></dl>
+    <div class="upper" style="margin-bottom:6px">Bank details ${bad ? '<span class="chip s-hold" style="margin-left:6px">' + ic('pause-circle') + 'Mismatch</span>' : vp.bankInv ? '<span class="chip s-auto" style="margin-left:6px">' + ic('check-circle') + 'Match</span>' : ''}</div>
+    <div class="bank-cmp">${bankBox('On invoice', vp.bankInv, bad ? 'bad' : '')}${bankBox('On file (vendor master)', vp.bankFile)}</div>
+    ${bad ? `<div class="banner bad" style="margin-top:12px">${ic('warn', 'lg')}<span>The invoice also says: "Our bank details have changed with effect from 1 Nov 2026." The account changed on invoice only. No change request is on file. Last verified change: ${v.changed}.</span></div>` : ''}
+    <hr style="border:0;border-top:1px solid var(--line);margin:18px 0 8px"><div class="upper">How similar this is to an earlier invoice</div>
+    <div class="gauge" role="img" aria-label="Similarity ${sc.toFixed(2)}"><span class="th" style="left:60%">0.60 review</span><span class="th" style="left:85%">0.85 reject</span><span class="mk" style="left:${mk}%"><em>${sc.toFixed(2)}</em></span></div>
+    <p class="small sec">${dup.sigs || dup.exact ? '' : `Closest earlier invoice is <b>${dup.closest ? esc(dup.closest.invNo) : 'none'}</b> at ${sc.toFixed(2)}. Allowed below 0.60.`}${dup.sigs && inv.key !== 'si04' ? 'Possible duplicate. Compare the two invoices below and decide.' : ''}${inv.key === 'si04' ? 'Same invoice written differently. A string match would miss it; five signals agree.' : ''}</p>${sigs}</div>`;
+}
+
+function panelPO(inv, d) {
+  const p = d.po, po = p.obj, c = d.cum; const v = V(inv.vendor);
+  const scale = Math.max(112, c.after + 4), over = c.after > 100.5;
+  const aW = c.before / scale * 100, bW = Math.min(c.after, 100) > c.before ? (Math.min(c.after, 100) - c.before) / scale * 100 : 0, oW = over ? (c.after - 100) / scale * 100 : 0;
+  const rows = d.rows.map(r => r.sev === 'none' ? `<tr class="muted-row"><td colspan="2">${r.pl}: not on this invoice</td><td class="r num">${r.ord}</td><td class="r num">${r.bb}</td><td class="r num">0</td><td class="r num">${r.rem}</td><td colspan="3" class="muted small">Already billed before</td></tr>` : `<tr class="sev" style="--sev:${r.sev === 'pass' ? 'transparent' : OUT_COLOR[r.sev === 'note' ? 'note' : r.sev]}"><td>${esc(r.il)}</td><td class="mono small">${esc(r.pl)}</td><td class="r num">${r.ord.toLocaleString('en-IN')}</td><td class="r num">${r.bb.toLocaleString('en-IN')}</td><td class="r num"><b>${r.ti.toLocaleString('en-IN')}</b></td><td class="r num" style="${r.over ? 'color:var(--reject-fg);font-weight:700' : ''}">${r.rem.toLocaleString('en-IN')}${r.over ? `<div class="tiny">${r.over} over</div>` : ''}</td><td class="r num nowrap">${inr2(r.pp)} → ${inr2(r.ip)}<div class="tiny ${Math.abs(r.dp) > 0.005 ? '' : 'muted'}">${r.dp >= 0 ? '+' : ''}${(r.dp * 100).toFixed(1)}%</div></td><td class="r num nowrap">${r.av ? (r.av > 0 ? '+' : '−') + inr(Math.abs(Math.round(r.av))) : '₹0'}</td><td class="c">${sevIcon(r.sev)}</td></tr>${r.note ? `<tr><td colspan="9" class="small sec" style="background:var(--surface-2)">${ic('link', 'sm')} ${esc(r.note)}</td></tr>` : ''}`).join('');
+  const cands = p.cands ? `<div class="stack-s" style="margin-bottom:14px"><div class="upper">Match candidates (inferred, no PO on the invoice)</div>${p.cands.map((cd, i) => `<div class="cand ${i === 0 ? 'win' : ''}"><div class="row"><b class="mono">${cd.id}</b>${i === 0 ? '<span class="chip s-auto">' + ic('check-circle') + 'Selected</span>' : '<span class="pill">Runner-up</span>'}<span class="right" style="font-family:var(--f-head);font-weight:800;font-size:18px">${Math.round(cd.score * 100)}%</span></div><div class="small sec">${cd.note}</div>${cd.parts.map(pt => `<div class="mini-b"><span>${pt[0]} <span class="tiny muted">(${Math.round(pt[2] * 100)}%)</span></span><div class="bar"><i style="width:${pt[1] * 100}%;background:${i === 0 ? 'var(--ok)' : 'var(--ink-3)'}"></i></div><span class="num">${Math.round(pt[1] * 100)}%</span></div>`).join('')}</div>`).join('')}
+    <div class="small sec" style="background:var(--surface-2);border-radius:8px;padding:8px 12px">Rule: accept an implied PO only when the best score is 90% or more, the runner-up is at least 20 points lower and the invoice is up to ₹1,00,000. Here: <b>96%</b>, a gap of <b>82 points</b>, and a total of <b>${inr(inv.gross)}</b>. All three conditions hold.</div></div>` : '';
+  const tl = po && po.hist.length ? `<div class="upper" style="margin:18px 0 10px">All invoices against this PO</div><div class="tl">${po.hist.map(h => `<div class="ev ${h[4] === inv.key ? 'now' : ''}" style="--evc:${OUT_COLOR[h[3]]}"><div class="row wrap gap-s"><a href="#s4-${h[4]}" class="mono"><b>${h[0]}</b></a><span class="muted small">${h[1]}</span><span class="num">${inr(h[2])}</span>${chip(h[3])}${h[4] === inv.key ? '<span class="pill accent">This invoice</span>' : ''}</div><div class="small sec">${h[5]}</div></div>`).join('')}</div>` : '';
+  return `<div class="card panel"><h3>${ic('link', 'sm')}Purchase order match</h3>
+  <div class="row wrap" style="margin-bottom:14px"><a class="mono" href="#s6" data-act="openPo" data-id="${p.id}" style="font-size:15px;font-weight:700">${p.id}</a><span class="chip ${p.method === 'Explicit' ? 's-auto' : 's-note'}">${ic(p.method === 'Explicit' ? 'check-circle' : 'note-circle')}${p.method}${p.method === 'Implied' ? ' · ' + Math.round(p.score * 100) + '% vs ' + Math.round(p.runner * 100) + '%' : ''}</span>${po ? `<span class="small sec">${esc(v.short)} · issued ${po.issued} · valid to ${po.valid} · ${po.status}</span>` : ''}</div>
+  ${cands}
+  <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Invoice line</th><th>PO line</th><th class="r">Ordered</th><th class="r">Billed before</th><th class="r">This invoice</th><th class="r">Remaining</th><th class="r">Unit price, PO → invoice</th><th class="r">Variance</th><th class="c">Status</th></tr></thead><tbody>${rows}</tbody></table></div>
+  <div class="cum" style="margin-top:16px"><div class="upper" style="margin-bottom:6px">Cumulative billed against this PO (before tax)</div><div class="track" role="img" aria-label="${c.before.toFixed(0)} percent billed before, ${c.after.toFixed(0)} percent after"><div class="a" style="width:${aW}%"></div><div class="b" style="width:${bW}%"></div><div class="b over" style="width:${oW}%"></div><span class="line" style="left:${100 / scale * 100}%"></span></div>
+  <div class="cum-lab"><span><b>${c.before.toFixed(0)}%</b> billed before (${inr(c.beforeVal)})</span><span>PO value ${inr(c.totalVal)} = 100%</span><span style="${over ? 'color:var(--reject-fg);font-weight:700' : ''}"><b>${c.after.toFixed(0)}%</b> after this invoice (${inr(c.beforeVal + c.thisVal)})</span></div></div>${tl}</div>`;
+}
+
+function panelRules(inv, d) {
+  const sorted = d.rules.slice().sort((a, b) => SEVRANK[b.sev] - SEVRANK[a.sev] || a.stage - b.stage);
+  const vis = sorted.filter(r => STATE4.showPassed || r.sev !== 'pass');
+  const flagged = sorted.filter(r => r.sev !== 'pass').length;
+  const rowsH = vis.map(r => `<div class="rule"><span>${sevIcon(r.sev)}</span><div><div class="rt">${esc(r.name)} <span class="rid">${r.id}</span>${r.hard ? ' <span class="pill" style="font-size:10.5px">Hard stop</span>' : ''}<span class="tiny muted"> · ${STAGES[r.stage - 1].name}</span></div><div class="rs">${esc(r.msg)}</div>${r.allowed ? `<div class="tiny muted" style="margin-top:2px">${r.allowed}. <a href="#s7">Why this rule?</a></div>` : `<div class="tiny" style="margin-top:2px"><a href="#s7">Why this rule?</a></div>`}</div>${sevChip(r.sev)}</div>`).join('');
+  return `<div class="card panel"><h3>${ic('check-circle', 'sm')}Rule checklist<span class="muted small" style="font-weight:500">${flagged} flagged · ${16 - flagged} passed</span><label class="right row gap-s small sec" style="font-weight:500;cursor:pointer"><button class="toggle" role="switch" aria-checked="${STATE4.showPassed}" data-act="togglePassed" aria-label="Show passed checks"></button>Show passed checks</label></h3>${rowsH || '<div class="empty small">All 16 checks passed.</div>'}</div>`;
+}
+
+function panelDrafts(inv, d) {
+  const dr = d.draft; if (!dr) return '';
+  const chk = inv.key === 'si06' ? `<div class="upper" style="margin:18px 0 6px">Verification checklist (manager releases the hold when all three are ticked)</div><div class="checklist">${['Called Corevolt on the number in our vendor file (' + V('V-102').phone + '), not the number on the invoice', 'Received a written change request on company letterhead', 'A second person confirmed the new account'].map((t, i) => `<label><input type="checkbox" class="check" id="vc${i}"><span>${t}</span></label>`).join('')}</div><p class="small sec" style="margin-top:8px">After the checklist, a manager updates the vendor record in <a href="#s6">master data</a> and releases the hold. Ledgerlight then re-checks the bank details.</p>` : '';
+  return `<div class="card panel"><h3>${ic('mail', 'sm')}${dr.title}<span class="pill right">Draft. Nothing is sent automatically</span></h3><div class="small muted" style="margin-bottom:8px">To: ${esc(dr.to)} · Subject: <b>${esc(dr.subject)}</b></div><div class="draft" id="draft-text">${esc(dr.body)}</div><div class="row" style="margin-top:12px"><button class="btn" data-act="copyDraft">${ic('copy', 'sm')}Copy email draft</button>${inv.key === 'si06' ? `<span class="small muted">Call script: "Hello, this is Accounts Payable at Aster Industries. We received invoice CV-8902 with a new bank account. Can you confirm the change?"</span>` : ''}</div>${chk}</div>`;
+}
+
+function activityFor(inv) {
+  const ev = AUDIT.filter(a => a.obj.id === inv.invNo).sort((a, b) => a.ts - b.ts);
+  return ev.length ? ev : [{ ts: inv.time, actor: { t: 'System', n: 'Ledgerlight rules' }, type: 'Decision made', summary: `${OUT[inv.outcome].long}: ${inv.reason}`, outcome: inv.outcome }];
+}
+function panelActivity(inv, d) {
+  const ev = activityFor(inv);
+  return `<div class="card panel"><h3>${ic('clock', 'sm')}Activity<a class="right small" href="#s8" data-act="auditFor" data-inv="${esc(inv.invNo)}">Open this invoice in the audit log</a></h3><div class="tl">${ev.map((e, i) => `<div class="ev ${i === ev.length - 1 ? 'now' : ''}" style="--evc:${e.outcome ? OUT_COLOR[e.outcome] : 'var(--line-2)'}"><div class="small muted">${fmtDS(e.ts)}, ${fmtT(e.ts)} · ${esc(e.actor.n)}</div><div>${esc(e.summary)}</div></div>`).join('')}</div></div>`;
+}
+
+/* ---- S4 actions ---- */
+ACT.s4tab = t => { STATE4.tab = t.dataset.t; route(true); };
+ACT.zoom = t => { STATE4.zoom = clamp(STATE4.zoom + +t.dataset.d, 0.6, 1.4); route(true); };
+ACT.togglePassed = () => { STATE4.showPassed = !STATE4.showPassed; route(true); };
+ACT.hlField = t => { const k = t.dataset.f; const on = STATE4.hl === k; STATE4.hl = on ? null : k; $$('.paper [data-f]').forEach(e => e.classList.toggle('hl', !on && e.dataset.f === k)); if (!on && STATE4.tab === 'doc' || innerWidth > 900) { const el = $(`.paper [data-f="${k}"]`); if (el && !on) el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } };
+ACT.editField = () => toast('To correct a field, edit the value and Ledgerlight re-checks stages 3 to 9. Editing is switched off in this mock.');
+ACT.copyJson = () => { const inv = INV[S4KEY]; copyText(decisionJSON(inv, buildDetail(inv)), 'Decision JSON'); };
+ACT.copyDraft = () => { const dr = buildDetail(INV[S4KEY]).draft; copyText(`To: ${dr.to}\nSubject: ${dr.subject}\n\n${dr.body}`, 'Email draft'); };
+ACT.openPo = () => { };
+ACT.navExc = t => { const l = QUEUE_ORDER(); const i = l.findIndex(r => r.key === S4KEY) + +t.dataset.d; if (l[i]) location.hash = '#s4-' + l[i].key; };
+ACT.acceptDecision = () => { const inv = INV[S4KEY]; inv.confirmedBy = ROLES[S.role].name; addAudit('Decision made', `${ROLES[S.role].name} accepted the decision on ${inv.invNo}: ${OUT[inv.outcome].long}`, inv, inv.outcome, { confirmed_by: ROLES[S.role].name }); toast('Decision confirmed. Recorded in the audit log.'); route(true); };
+function addAudit(type, summary, inv, outcome, payload) { AUDIT.unshift({ ts: new Date(TODAY.getTime() + (AUDIT.length % 50) * 60000 + 900000), actor: { t: 'Human', n: ROLES[S.role].name }, type, summary, obj: { k: 'Invoice', id: inv.invNo, href: '#s4-' + inv.key }, outcome, payload }); }
+
+ACT.openOverride = () => {
+  const inv = INV[S4KEY], d = buildDetail(inv); const bank = d.rules.some(r => r.id === 'R05' && r.sev === 'hold');
+  const perm = canOverride(inv, 'approve');
+  openSheet(`<div class="sheet-h"><div><div class="upper">Override decision</div><h3>${esc(inv.invNo)} · ${esc(inv.vname)}</h3></div><button class="icon-btn right" data-act="closeSheet" aria-label="Close">${ic('x')}</button></div>
+  <div class="sheet-b"><div class="row gap-s">Current decision ${chip(inv.outcome)}<span class="small muted">${inr2(inv.gross)}${inv.exposure ? ' · exposure ' + inr(inv.exposure) : ''}</span></div>
+  ${!perm.ok && inv.outcome !== 'auto' ? `<div class="banner bad" id="perm-banner">${ic('lock', 'lg')}<span>${perm.why}</span></div>` : ''}
+  <div class="field-l">Action<div class="seg" id="ov-action" style="align-self:flex-start"><button class="on" data-act="ovAction" data-a="approve">Approve</button><button data-act="ovAction" data-a="reject">Reject</button><button data-act="ovAction" data-a="info">Send back for info</button></div></div>
+  ${bank ? `<div class="stack-s"><div class="upper">Bank change verification (manager only)</div><div class="checklist">${['Called the vendor on the number in the master', 'Received a written change request', 'A second person confirmed the new account'].map((t, i) => `<label><input type="checkbox" class="check ov-chk" id="ovc${i}"><span>${t}</span></label>`).join('')}</div></div>` : ''}
+  <label class="field-l">Reason code<select id="ov-code">${REASON_CODES.map(c => `<option>${c}</option>`).join('')}</select></label>
+  <label class="field-l">Reason (at least 10 characters)<textarea id="ov-text" placeholder="Say why you are changing this decision"></textarea><span class="tiny muted" id="ov-count">0 of 10 characters</span></label>
+  <div class="small sec" id="ov-effect" style="background:var(--surface-2);border-radius:8px;padding:10px 12px">This will move the invoice to the payment queue and be recorded in the audit log. The original decision stays on record.</div></div>
+  <div class="sheet-f"><button class="btn" data-act="closeSheet">Cancel</button><button class="btn primary" id="ov-submit" data-act="submitOverride" disabled>Confirm override</button></div>`);
+  const upd = () => { const t = $('#ov-text').value.trim().length, a = $('#ov-action .on').dataset.a; $('#ov-count').textContent = t + ' of 10 characters'; const p = canOverride(inv, a); const chk = bank ? $$('.ov-chk').every(c => c.checked) : true; const ok = t >= 10 && p.ok && chk && !(inv.outcome === 'auto' && a === 'approve'); $('#ov-submit').disabled = !ok; };
+  $('#ov-text').oninput = upd; $$('.ov-chk').forEach(c => c.onchange = upd); window.__ovUpd = upd; upd();
+};
+ACT.closeSheet = () => closeSheet();
+ACT.ovAction = t => { $$('#ov-action button').forEach(b => b.classList.toggle('on', b === t)); const inv = INV[S4KEY]; const a = t.dataset.a; $('#ov-effect').textContent = { approve: 'This will move the invoice to the payment queue and be recorded in the audit log. The original decision stays on record.', reject: 'This will reject the invoice and queue a return notice for the vendor. It is recorded in the audit log.', info: 'This will put the invoice on hold, start the 3 business day wait and keep the drafted message ready.' }[a]; const p = canOverride(inv, a); let b = $('#perm-banner'); if (!p.ok) { if (!b) $('.sheet-b').insertAdjacentHTML('afterbegin', `<div class="banner bad" id="perm-banner">${ic('lock', 'lg')}<span>${p.why}</span></div>`); else b.lastChild.textContent = p.why; } else if (b) b.remove(); window.__ovUpd(); };
+ACT.submitOverride = () => {
+  const inv = INV[S4KEY], a = $('#ov-action .on').dataset.a, code = $('#ov-code').value, text = $('#ov-text').value.trim(); const to = { approve: 'auto', reject: 'reject', info: 'hold' }[a]; const from = inv.outcome;
+  inv.overridden = { from, by: ROLES[S.role].name, code, text, when: fmtDS(TODAY) + ', ' + fmtT(new Date(TODAY.getTime() + 420000)) }; inv.outcome = to; inv.exposure = to === 'auto' ? 0 : inv.exposure; delete inv._d;
+  addAudit('Override', `${ROLES[S.role].name} changed ${inv.invNo} from ${OUT[from].label} to ${OUT[to].label}: ${code}`, inv, to, { before: OUT[from].label, after: OUT[to].label, reason_code: code, reason_text: text });
+  closeSheet(); toast(`Decision changed to ${OUT[to].label}. Recorded in the audit log.`); updateNavBadge(); route(true);
+};
+
+/* ===== S5 Review queue ===== */
+const STATE5 = { tab: 'review', assigned: 'all', exposure: 'all', cat: 'all', sort: 'priority', sel: null, checked: new Set(), asked: new Set() };
+const RESOLVED_SEED = [
+  { vname: 'Corevolt', invNo: 'CV-8790', gross: 186400, final: 'auto', by: 'Rahul Mehta', code: 'PO amended by Procurement', when: '16 Nov, 09:41' },
+  { vname: 'Greenleaf', invNo: 'GL-2268', gross: 121000, final: 'auto', by: 'Priya Nair', code: 'Extraction corrected', when: '15 Nov, 16:22' },
+  { vname: 'Brightline', invNo: 'BL/2026/0398', gross: 64900, final: 'reject', by: 'Priya Nair', code: 'Credit note requested', when: '13 Nov, 12:10' },
+  { vname: 'Meridian', invNo: 'MX-5502', gross: 92300, final: 'auto', by: 'Rahul Mehta', code: 'Price agreed with Procurement', when: '11 Nov, 15:48' },
+  { vname: 'Kestrel', invNo: 'K/1229', gross: 143800, final: 'auto', by: 'Rahul Mehta', code: 'Vendor confirmed by phone', when: '6 Nov, 10:05' },
+  { vname: 'Corevolt', invNo: 'CV-8812', gross: 53600, final: 'reject', by: 'Priya Nair', code: 'Not actually a duplicate', when: '3 Nov, 14:30' },
+];
+const qItems = tab => RUNS.filter(r => r.outcome === ({ review: 'review', hold: 'hold', rejected: 'reject' })[tab] && !r.resolved);
+const openExcCount = () => RUNS.filter(r => (r.outcome === 'review' || r.outcome === 'hold') && !r.resolved).length;
+function updateNavBadge() { const b = $('#nav-badge'); if (b) b.textContent = openExcCount(); }
+
+function queueFiltered() {
+  const S5 = STATE5; let l = qItems(S5.tab);
+  if (S5.assigned !== 'all') { const me = S.role === 'manager' ? 'Manager' : 'Clerk pool'; l = l.filter(r => r.owner === (S5.assigned === 'me' ? me : S5.assigned)); }
+  if (S5.exposure === '10k') l = l.filter(r => r.exposure > 10000); if (S5.exposure === '1l') l = l.filter(r => r.exposure > 100000);
+  if (S5.cat !== 'all') l = l.filter(r => r.cat === S5.cat);
+  return l.sort((a, b) => S5.sort === 'exposure' ? b.exposure - a.exposure : S5.sort === 'age' ? b.age - a.age : (b.exposure * (1 + b.age)) - (a.exposure * (1 + a.age)));
+}
+function ageBadge(r) { const lim = r.outcome === 'hold' ? 3 : 2; const cls = r.age >= (r.outcome === 'hold' ? 3 : 99) ? 'red' : r.age >= 1 ? 'amber' : ''; return `<span class="age ${cls}" data-tip="${r.outcome === 'hold' ? 'Hold SLA is 3 business days' : 'Same business day target'}">${r.age === 0 ? 'Today' : r.age + (r.age === 1 ? ' day' : ' days')}</span>`; }
+
+function renderS5() {
+  const S5 = STATE5, cnt = t => qItems(t).length; const l = S5.tab === 'resolved' ? null : queueFiltered();
+  const cats = ['Quantity or price above PO', 'Duplicate', 'Bank change', 'Missing information', 'Vendor problem', 'Tax or total'];
+  const sel = S5.sel && INV[S5.sel] ? INV[S5.sel] : null;
+  const resolvedRows = [...RUNS.filter(r => r.resolved).map(r => ({ vname: r.vname, invNo: r.invNo, gross: r.gross, final: r.outcome, by: r.resolved.by, code: 'Accepted recommendation', when: r.resolved.when })), ...RESOLVED_SEED];
+  const body = S5.tab === 'resolved' ? `<div class="card"><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Invoice</th><th>Vendor</th><th class="r">Amount</th><th>Final</th><th>Resolved by</th><th>Reason</th><th>When</th></tr></thead><tbody>${resolvedRows.map(r => `<tr><td class="mono">${esc(r.invNo)}</td><td>${esc(r.vname)}</td><td class="r num">${inr2(r.gross)}</td><td>${chip(r.final)}</td><td>${esc(r.by)}</td><td class="sec">${esc(r.code)}</td><td class="muted small">${r.when}</td></tr>`).join('')}</tbody></table></div></div>`
+    : l.length ? l.map(r => { const d = buildDetail(r); return `<div class="qrow sev-${r.outcome} ${S5.sel === r.key ? 'sel' : ''}" data-act="qSelect" data-k="${r.key}" tabindex="0" role="button" aria-label="Open quick view for ${esc(r.invNo)}">
+      <input type="checkbox" class="check" data-act="qCheck" data-k="${r.key}" ${S5.checked.has(r.key) ? 'checked' : ''} aria-label="Select ${esc(r.invNo)}">
+      <div class="trunc" style="min-width:150px"><div class="row gap-s">${chip(r.outcome)}</div><div style="margin-top:6px"><b>${esc(r.vname)}</b> <span class="mono small sec">${esc(r.invNo)}</span></div><div class="tiny muted">${inr2(r.gross)}</div></div>
+      <div class="sec" style="min-width:0">${esc(r.reason)}<div class="tiny muted" style="margin-top:3px">${r.cat || ''}${r.ec ? ` · <b style="color:var(--accent-fg)">${r.ec}</b>` : ''}</div></div>
+      <div class="side"><div class="num" style="font-family:var(--f-head);font-weight:800;font-size:16px">${inr(r.exposure)}</div><div class="tiny muted">exposure</div><div class="row gap-s">${ageBadge(r)}<span class="tag">${r.owner}</span></div></div>
+      <div class="rec">${ic('arrow-r', 'sm')}<span><b>Recommended:</b> ${esc(r.rec)}</span></div></div>`; }).join('') : `<div class="card empty"><h4>Nothing needs you right now</h4><p>42 invoices were approved without a person this month.</p><p style="margin-top:12px"><a class="btn" href="#s1">Back to the dashboard</a></p></div>`;
+  return `${pageHead('Review queue', 'Everything a person has to touch, ranked by risk and age.', `<span class="small muted">Showing the queue as <b>${ROLES[S.role].label}</b></span>`)}
+  <div class="stack">
+    <div class="tabs" role="tablist">${[['review', 'Needs review'], ['hold', 'On hold'], ['rejected', 'Rejected']].map(([k, n]) => `<button role="tab" class="${S5.tab === k ? 'on' : ''}" data-act="qTab" data-t="${k}">${n}<span class="ct">${cnt(k)}</span></button>`).join('')}<button role="tab" class="${S5.tab === 'resolved' ? 'on' : ''}" data-act="qTab" data-t="resolved">Resolved, last 30 days<span class="ct">${resolvedRows.length}</span></button></div>
+    ${S5.tab === 'resolved' ? '' : `<div class="row wrap">
+      <label class="field-l" style="flex-direction:row;align-items:center;gap:8px">Assigned to<select id="q-as" data-act="qFilter" data-f="assigned"><option value="all">Anyone</option><option value="me" ${S5.assigned === 'me' ? 'selected' : ''}>Me</option><option ${S5.assigned === 'Clerk pool' ? 'selected' : ''}>Clerk pool</option><option ${S5.assigned === 'Manager' ? 'selected' : ''}>Manager</option></select></label>
+      <label class="field-l" style="flex-direction:row;align-items:center;gap:8px">Exposure<select id="q-ex" data-act="qFilter" data-f="exposure"><option value="all">Any</option><option value="10k" ${S5.exposure === '10k' ? 'selected' : ''}>Above ₹10,000</option><option value="1l" ${S5.exposure === '1l' ? 'selected' : ''}>Above ₹1,00,000</option></select></label>
+      <label class="field-l" style="flex-direction:row;align-items:center;gap:8px">Reason<select id="q-ca" data-act="qFilter" data-f="cat"><option value="all">All reasons</option>${cats.map(c => `<option ${S5.cat === c ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
+      <label class="field-l right" style="flex-direction:row;align-items:center;gap:8px">Sort<select id="q-so" data-act="qFilter" data-f="sort"><option value="priority">Risk and age</option><option value="exposure" ${S5.sort === 'exposure' ? 'selected' : ''}>Exposure</option><option value="age" ${S5.sort === 'age' ? 'selected' : ''}>Age</option></select></label></div>
+    ${S5.checked.size ? `<div class="banner info fade-in"><b>${S5.checked.size} selected</b><span class="grow"></span><label class="row gap-s small">Assign to <select id="bulk-as"><option>Clerk pool</option><option>Manager</option></select></label><button class="btn sm" data-act="bulkAssign">Assign</button><button class="btn sm" data-act="bulkExport">${ic('download', 'sm')}Export CSV</button></div>` : ''}`}
+    <div class="q-layout ${sel && S5.tab !== 'resolved' ? 'has-panel' : ''}"><div class="stack-s" style="gap:10px;min-width:0">${body}</div>${sel && S5.tab !== 'resolved' ? quickPanel(sel) : ''}</div>
+  </div>`;
+}
+function quickPanel(r) {
+  const d = buildDetail(r), asked = STATE5.asked.has(r.key);
+  const top = d.rows.filter(x => x.ti && (x.sev !== 'pass')).slice(0, 2);
+  return `<aside class="card qpanel fade-in" aria-label="Quick view"><div class="row"><div class="grow"><div class="row gap-s">${chip(r.outcome)}<span class="mono small muted">${esc(r.invNo)}</span></div></div><button class="icon-btn" data-act="qClose" aria-label="Close quick view">${ic('x', 'sm')}</button></div>
+  <h3 style="font-size:16px;line-height:1.35">${esc(d.headline)}</h3>
+  <dl class="kv"><dt>Vendor</dt><dd>${esc(r.vfull)}</dd><dt>Amount</dt><dd class="num"><b>${inr2(r.gross)}</b></dd><dt>Exposure</dt><dd class="num"><b>${inr(r.exposure)}</b></dd><dt>PO</dt><dd class="mono">${d.po.id}</dd><dt>Assigned</dt><dd>${r.owner} · ${ageBadge(r)}</dd></dl>
+  ${top.length ? `<div><div class="upper" style="margin-bottom:6px">Biggest differences from the PO</div>${top.map(x => `<div class="row small" style="padding:6px 0;border-bottom:1px solid var(--line)">${sevIcon(x.sev)}<span class="grow">${esc(x.il)}</span><span class="num sec">${x.over ? x.over + ' over' : (x.dp * 100).toFixed(1) + '%'}</span><b class="num">${x.av ? '+' + inr(Math.round(x.av)) : ''}</b></div>`).join('')}</div>` : ''}
+  <div class="next small"><b>${esc(r.rec)}</b></div>
+  ${r.outcome === 'hold' ? `<div class="stack-s"><div class="upper">Hold controls</div><div class="row wrap gap-s"><button class="btn sm" data-act="copyHoldDraft" data-k="${r.key}">${ic('copy', 'sm')}Copy vendor email draft</button><button class="btn sm" data-act="markAsked" data-k="${r.key}">${ic('clock', 'sm')}${asked ? 'Info requested. SLA running' : 'Mark info requested'}</button><label class="btn sm" for="up-${r.key}">${ic('upload', 'sm')}Upload received document</label><input hidden type="file" id="up-${r.key}" accept="application/pdf" data-act="uploadHold" data-k="${r.key}"></div></div>` : ''}
+  <div class="row wrap gap-s"><button class="btn primary" data-act="qAccept" data-k="${r.key}">${ic('check', 'sm')}Accept recommendation</button><a class="btn" href="#s4-${r.key}" data-act="qOverride" data-k="${r.key}">Override…</a><a class="btn" href="#s4-${r.key}">Open full detail</a></div></aside>`;
+}
+ACT.qTab = t => { STATE5.tab = t.dataset.t; STATE5.sel = null; STATE5.checked.clear(); route(true); };
+ACT.qSelect = (t, e) => { if (e.target.closest('input')) return; STATE5.sel = t.dataset.k; route(true); };
+ACT.qClose = () => { STATE5.sel = null; route(true); };
+ACT.qCheck = (t, e) => { e.stopPropagation(); t.checked ? STATE5.checked.add(t.dataset.k) : STATE5.checked.delete(t.dataset.k); route(true); };
+document.addEventListener('change', e => { const t = e.target.closest('[data-act="qFilter"]'); if (t) { STATE5[t.dataset.f] = t.value; route(true); } const u = e.target.closest('[data-act="uploadHold"]'); if (u && u.files.length) { toast('Document received. The pipeline is re-running with the new file attached to the same invoice.'); setTimeout(() => location.hash = '#s3-' + u.dataset.k, 900); } });
+ACT.bulkAssign = () => { const to = $('#bulk-as').value; STATE5.checked.forEach(k => { INV[k].owner = to; }); toast(`${STATE5.checked.size} invoices assigned to ${to}.`); STATE5.checked.clear(); route(true); };
+ACT.bulkExport = () => { toast(`${STATE5.checked.size} invoices exported as CSV.`); };
+ACT.copyHoldDraft = t => { const dr = buildDetail(INV[t.dataset.k]).draft; copyText(`To: ${dr.to}\nSubject: ${dr.subject}\n\n${dr.body}`, 'Email draft'); };
+ACT.markAsked = t => { STATE5.asked.add(t.dataset.k); addAudit('Decision made', `Marked info requested for ${INV[t.dataset.k].invNo}. 3 business day SLA started`, INV[t.dataset.k], 'hold', { sla: '3 business days' }); toast('Info requested. The 3 business day SLA clock has started.'); route(true); };
+ACT.qOverride = (t, e) => { e.preventDefault(); S4KEY = t.dataset.k; location.hash = '#s4-' + t.dataset.k; setTimeout(() => ACT.openOverride(), 120); };
+ACT.qAccept = t => {
+  const r = INV[t.dataset.k]; r.resolved = { by: ROLES[S.role].name, when: fmtDS(TODAY) + ', ' + fmtT(new Date(TODAY.getTime() + 300000)) }; STATE5.sel = null;
+  addAudit('Decision made', `${ROLES[S.role].name} accepted the recommendation on ${r.invNo}: ${r.rec}`, r, r.outcome, { recommendation: r.rec }); updateNavBadge(); route(true);
+  toast(`${esc(r.invNo)} approved by you.`, () => { delete r.resolved; AUDIT.shift(); updateNavBadge(); route(true); });
+};
+
+/* ===== S6 PO and vendor master data ===== */
+const STATE6 = { tab: 'po', status: 'all', vendor: 'all', q: '' };
+const PO_CHIP = { 'Open': 's-note', 'Partially billed': 's-review', 'Fully billed': 's-auto', 'Closed': 's-none', 'Cancelled': 's-reject' };
+const V_CHIP = { approved: ['s-auto', 'Approved', 'check-circle'], pending: ['s-hold', 'Pending onboarding', 'pause-circle'], blocked: ['s-reject', 'Blocked', 'x-circle'] };
+const poInvCount = p => p.hist.length;
+
+function renderS6() {
+  const S6 = STATE6;
+  let pos = POS.filter(p => (S6.status === 'all' || p.status === S6.status) && (S6.vendor === 'all' || p.v === S6.vendor) && (!S6.q || (p.id + V(p.v).name).toLowerCase().includes(S6.q.toLowerCase())));
+  let vs = VENDORS.filter(v => !S6.q || (v.id + v.name + v.gstin).toLowerCase().includes(S6.q.toLowerCase()));
+  const poRows = pos.map(p => { const sub = poSub(p), b = poBilled(p), pc = Math.round(b / sub * 100); return `<tr class="link" data-act="openPoDrawer" data-id="${p.id}"><td class="mono"><b>${p.id}</b>${p.seed ? '' : ''}</td><td>${esc(V(p.v).short)}</td><td class="nowrap">${p.issued}</td><td class="nowrap">${p.valid}</td><td><span class="chip ${PO_CHIP[p.status]}">${p.status}</span></td><td class="r num">${inr(sub)}</td><td style="min-width:150px"><div class="row gap-s"><div class="bar grow"><i style="width:${Math.min(pc, 100)}%;background:${pc >= 100 ? 'var(--ok)' : 'var(--accent)'}"></i></div><span class="num small">${pc}%</span></div><div class="tiny muted num">${inr(b)}${p.pending ? ` · +${inr(p.pending)} pending` : ''}</div></td><td class="r num">${inr(Math.max(0, sub - b))}</td><td class="r num">${poInvCount(p)}</td></tr>`; }).join('');
+  const vRows = vs.map(v => { const st = V_CHIP[v.status]; return `<tr class="link" data-act="openVendorDrawer" data-id="${v.id}"><td class="mono"><b>${v.id}</b></td><td>${esc(v.name)}</td><td class="mono small">${v.gstin}</td><td><span class="chip ${st[0]}">${ic(st[2])}${st[1]}</span></td><td>${v.terms}</td><td class="mono small">${v.acct ? '•••• ' + v.acct.slice(-4) : '<span class="muted">none</span>'}</td><td class="muted small nowrap">${v.changed}</td></tr>`; }).join('');
+  return `${pageHead('Purchase orders and vendors', 'The procurement data every rule depends on. Editing it changes the next run.', `<button class="btn" data-act="openImport">${ic('upload', 'sm')}Import CSV</button><button class="btn" data-act="exportMaster">${ic('download', 'sm')}Export</button><button class="btn primary" data-act="addMaster">${ic('plus', 'sm')}${S6.tab === 'po' ? 'Add PO' : 'Add vendor'}</button>`)}
+  <div class="card"><div class="tabs" style="padding:0 12px"><button class="${S6.tab === 'po' ? 'on' : ''}" data-act="s6tab" data-t="po">Purchase orders<span class="ct">${POS.length}</span></button><button class="${S6.tab === 'v' ? 'on' : ''}" data-act="s6tab" data-t="v">Vendors<span class="ct">${VENDORS.length}</span></button></div>
+  <div class="row wrap" style="padding:12px 16px">${S6.tab === 'po' ? `<label class="row gap-s small sec">Status<select id="f6s" data-act="f6" data-f="status"><option value="all">All</option>${Object.keys(PO_CHIP).map(s => `<option ${S6.status === s ? 'selected' : ''}>${s}</option>`).join('')}</select></label><label class="row gap-s small sec">Vendor<select id="f6v" data-act="f6" data-f="vendor"><option value="all">All</option>${VENDORS.map(v => `<option value="${v.id}" ${S6.vendor === v.id ? 'selected' : ''}>${v.short}</option>`).join('')}</select></label>` : ''}<div class="search right" style="width:260px">${ic('search')}<input type="search" id="q6" placeholder="${S6.tab === 'po' ? 'Search PO or vendor' : 'Search vendor, ID or GSTIN'}" value="${esc(S6.q)}" aria-label="Search"></div></div>
+  <div class="tbl-wrap">${S6.tab === 'po' ? `<table class="tbl"><thead><tr><th>PO number</th><th>Vendor</th><th>Issued</th><th>Valid to</th><th>Status</th><th class="r">Pre-tax value</th><th>Billed to date</th><th class="r">Remaining</th><th class="r">Invoices</th></tr></thead><tbody>${poRows || '<tr><td colspan="9"><div class="empty"><h4>No purchase orders match</h4><p>Change the filters or import a CSV.</p></div></td></tr>'}</tbody></table>` : `<table class="tbl"><thead><tr><th>ID</th><th>Vendor</th><th>GSTIN</th><th>Status</th><th>Payment terms</th><th>Bank account</th><th>Last bank change</th></tr></thead><tbody>${vRows}</tbody></table>`}</div>
+  <div class="pager"><span>${S6.tab === 'po' ? pos.length + ' purchase orders. Billed to date counts approved invoices; pending ones are shown separately.' : vs.length + ' vendors. Bank account numbers are masked.'}</span></div></div>`;
+}
+function s6After() { const q = $('#q6'); if (q) q.oninput = () => { STATE6.q = q.value; const p = q.selectionStart; route(true); const n = $('#q6'); n.focus(); n.setSelectionRange(p, p); }; }
+document.addEventListener('change', e => { const t = e.target.closest('[data-act="f6"]'); if (t) { STATE6[t.dataset.f] = t.value; route(true); } });
+ACT.s6tab = t => { STATE6.tab = t.dataset.t; STATE6.q = ''; route(true); };
+ACT.exportMaster = () => toast('Export ready. The export was recorded in the audit log.');
+ACT.addMaster = () => {
+  const po = STATE6.tab === 'po';
+  openModal(`<div class="sheet-h"><h3>${po ? 'Add purchase order' : 'Add vendor'}</h3><button class="icon-btn right" data-act="closeModal" aria-label="Close">${ic('x')}</button></div><div class="sheet-b">${po ? `<label class="field-l">Vendor<select id="m1">${VENDORS.map(v => `<option>${v.name}</option>`).join('')}</select></label><div class="params"><label class="field-l">PO number<input type="text" id="m2" value="PO-2026-1010"></label><label class="field-l">Valid to<input type="text" id="m3" value="31 Dec 2026"></label></div><label class="field-l">First line<input type="text" id="m4" placeholder="Item code, description, quantity, unit price"></label>` : `<label class="field-l">Vendor name<input type="text" id="m1"></label><div class="params"><label class="field-l">GSTIN<input type="text" id="m2" maxlength="15"></label><label class="field-l">Payment terms<select id="m3"><option>Net 30</option><option>Net 15</option><option>Net 45</option></select></label></div>`}<p class="small muted">Every save writes an audit event with the values before and after.</p></div><div class="sheet-f"><button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" data-act="saveMaster">Save ${po ? 'PO' : 'vendor'}</button></div>`);
+};
+ACT.saveMaster = () => { const po = STATE6.tab === 'po'; closeModal(); AUDIT.unshift({ ts: new Date(TODAY.getTime() + 600000), actor: { t: 'Human', n: ROLES[S.role].name }, type: 'Master data changed', summary: po ? 'Added a purchase order (draft)' : 'Added a vendor (pending onboarding)', obj: { k: po ? 'PO' : 'Vendor', id: '(new)', href: '#s6' }, outcome: null, payload: { before: '(none)', after: po ? 'New PO' : 'New vendor, status Pending onboarding' } }); toast(po ? 'Purchase order saved.' : 'Vendor saved as pending onboarding.'); };
+
+ACT.openImport = () => {
+  const bad = (t, m) => `<tr><td class="mono">${t}</td><td colspan="4" style="color:var(--reject-fg)">${ic('x-circle', 'sm')} ${m}</td></tr>`;
+  openModal(`<div class="sheet-h"><div><div class="upper">Import wizard</div><h3>Import purchase orders from CSV</h3></div><button class="icon-btn right" data-act="closeModal" aria-label="Close">${ic('x')}</button></div>
+  <div class="sheet-b"><div class="row gap-s small"><span class="pill accent">1 Upload</span>${ic('chev-r', 'sm')}<span class="pill accent">2 Map columns</span>${ic('chev-r', 'sm')}<span class="pill accent">3 Check rows</span></div>
+  <div class="card flat" style="padding:12px 14px"><div class="row">${ic('file')}<b>po_import_nov.csv</b><span class="muted small">5 rows · 3 columns mapped automatically</span></div></div>
+  <div class="tbl-wrap"><table class="tbl"><thead><tr><th>PO number</th><th>Vendor</th><th>Item</th><th class="r">Qty</th><th>Check</th></tr></thead><tbody>
+    <tr><td class="mono">PO-2026-1010</td><td>Brightline</td><td>Whiteboard marker, box of 12</td><td class="r">200</td><td><span class="chip s-auto">${ic('check-circle')}Valid</span></td></tr>
+    <tr><td class="mono">PO-2026-1011</td><td>Corevolt</td><td>HDMI cable 3 m</td><td class="r">80</td><td><span class="chip s-auto">${ic('check-circle')}Valid</span></td></tr>
+    <tr><td class="mono">PO-2026-1009</td><td>Meridian</td><td>Freight Mumbai to Pune</td><td class="r">12</td><td><span class="chip s-reject">${ic('x-circle')}PO number already exists</span></td></tr>
+    <tr><td class="mono">PO-2026-1012</td><td>Northgate Traders</td><td>Pallet wrap</td><td class="r">60</td><td><span class="chip s-reject">${ic('x-circle')}Vendor not in master</span></td></tr>
+    <tr><td class="mono">PO-2026-1013</td><td>Greenleaf</td><td>Instant coffee 500 g</td><td class="r">−40</td><td><span class="chip s-reject">${ic('x-circle')}Quantity cannot be negative</span></td></tr></tbody></table></div>
+  <div class="banner">${ic('warn', 'lg')}<span><b>3 rows have problems.</b> Nothing is imported until every row is valid. Fix the file and upload it again.</span></div></div>
+  <div class="sheet-f"><button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" disabled>Import 5 rows</button></div>`);
+};
+
+ACT.openPoDrawer = t => {
+  const p = PO(t.dataset.id), v = V(p.v), sub = poSub(p), b = poBilled(p); const locked = p.hist.length > 0;
+  openSheet(`<div class="sheet-h"><div><div class="upper">Purchase order</div><h3 class="mono">${p.id}</h3></div><span class="chip ${PO_CHIP[p.status]}">${p.status}</span><button class="icon-btn right" data-act="closeSheet" aria-label="Close">${ic('x')}</button></div>
+  <div class="sheet-b">${locked ? `<div class="banner info">${ic('lock', 'lg')}<span>This PO has invoices against it, so the vendor and item codes are read-only. Changing them would rewrite history.</span></div>` : ''}
+  <div class="params"><label class="field-l">Vendor<input type="text" value="${esc(v.name)}" ${locked ? 'disabled' : ''}></label><label class="field-l">Issued<input type="text" value="${p.issued}"></label><label class="field-l">Valid to<input type="text" value="${p.valid}"></label><label class="field-l">Pre-tax value<input type="text" value="${inr(sub)}" disabled></label></div>
+  <div><div class="upper" style="margin-bottom:6px">Lines</div><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Item code</th><th>Description</th><th class="r">Ordered</th><th class="r">Unit price</th><th class="r">GST</th><th class="r">Billed</th><th class="r">Remaining</th></tr></thead><tbody>${p.lines.map(l => `<tr><td class="mono small">${l[0]}</td><td>${l[1]}</td><td class="r num">${l[3].toLocaleString('en-IN')} ${l[2]}</td><td class="r num">${inr(l[4], l[4] % 1 ? 2 : 0)}</td><td class="r num">${l[5]}%</td><td class="r num">${l[6].toLocaleString('en-IN')}</td><td class="r num"><b>${(l[3] - l[6]).toLocaleString('en-IN')}</b></td></tr>`).join('')}</tbody></table></div></div>
+  <div><div class="upper" style="margin-bottom:8px">Billing history</div>${p.hist.length ? `<div class="tl">${p.hist.map(h => `<div class="ev" style="--evc:${OUT_COLOR[h[3]]}"><div class="row wrap gap-s"><a class="mono" href="#s4-${h[4]}" data-act="closeSheet"><b>${h[0]}</b></a><span class="muted small">${h[1]}</span><span class="num">${inr(h[2])}</span>${chip(h[3])}</div><div class="small sec">${h[5]}</div></div>`).join('')}</div>` : '<div class="small muted">No invoices yet.</div>'}</div></div>
+  <div class="sheet-f"><button class="btn danger" data-act="poStatus" data-id="${p.id}" data-s="Cancelled">Cancel PO</button><button class="btn" data-act="poStatus" data-id="${p.id}" data-s="Closed">Close PO</button><button class="btn" data-act="toastMsg" data-m="Add line: a new line is saved with an audit event.">Add line</button><button class="btn primary" data-act="toastMsg" data-m="Saved. The change was recorded in the audit log with the values before and after.">Save changes</button></div>`, true);
+};
+ACT.toastMsg = t => toast(t.dataset.m);
+ACT.poStatus = t => { const p = PO(t.dataset.id), old = p.status; p.status = t.dataset.s; AUDIT.unshift({ ts: new Date(TODAY.getTime() + 700000), actor: { t: 'Human', n: ROLES[S.role].name }, type: 'Master data changed', summary: `${t.dataset.s === 'Closed' ? 'Closed' : 'Cancelled'} purchase order ${p.id}`, obj: { k: 'PO', id: p.id, href: '#s6' }, outcome: null, payload: { before: old, after: p.status } }); closeSheet(); toast(`${p.id} is now ${p.status.toLowerCase()}. Recorded in the audit log.`); route(true); };
+
+ACT.openVendorDrawer = t => {
+  const v = V(t.dataset.id), st = V_CHIP[v.status], mgr = S.role === 'manager';
+  const pos = POS.filter(p => p.v === v.id && !p.seed), inv = RUNS.filter(r => r.vendor === v.id && !r.synth).slice(0, 3);
+  openSheet(`<div class="sheet-h"><div><div class="upper">Vendor ${v.id}</div><h3>${esc(v.name)}</h3></div><span class="chip ${st[0]}">${ic(st[2])}${st[1]}</span><button class="icon-btn right" data-act="closeSheet" aria-label="Close">${ic('x')}</button></div>
+  <div class="sheet-b"><dl class="kv"><dt>GSTIN</dt><dd class="mono">${v.gstin}</dd><dt>Also known as</dt><dd>${v.aliases.join(', ')}</dd><dt>Payment terms</dt><dd>${v.terms}</dd><dt>Contact phone</dt><dd class="mono">${v.phone} <span class="muted small">(call this number to verify changes)</span></dd><dt>Address</dt><dd>${esc(v.addr)}</dd></dl>
+  <div class="card flat" style="padding:14px 16px"><div class="row" style="margin-bottom:8px"><b>Bank details</b><span class="muted small right">Last change ${v.changed}</span></div>${v.acct ? `<div class="kv"><dt>Bank</dt><dd>${v.bank}</dd><dt>Account</dt><dd class="mono">${v.acct}</dd><dt>IFSC</dt><dd class="mono">${v.ifsc}</dd></div>` : '<div class="sec small">No bank details on file.</div>'}
+  <div style="margin-top:12px"><button class="btn" data-act="bankForm" data-id="${v.id}" ${mgr ? '' : 'disabled'}>${ic('lock', 'sm')}Change bank details</button>${mgr ? '' : '<span class="small muted" style="margin-left:8px">Manager only. Switch role in the top bar.</span>'}</div><div id="bank-form"></div></div>
+  <div><div class="upper" style="margin-bottom:6px">Open purchase orders</div>${pos.filter(p => !['Closed', 'Fully billed'].includes(p.status)).map(p => `<div class="row small" style="padding:5px 0"><span class="mono">${p.id}</span><span class="chip ${PO_CHIP[p.status]}">${p.status}</span><span class="right num">${inr(poSub(p))}</span></div>`).join('') || '<div class="small muted">None open.</div>'}</div>
+  <div><div class="upper" style="margin-bottom:6px">Recent invoices</div>${inv.map(r => `<div class="row small" style="padding:5px 0"><a class="mono" href="#s4-${r.key}" data-act="closeSheet">${r.invNo}</a>${chip(r.outcome)}<span class="right num">${inr(r.gross)}</span></div>`).join('')}</div>
+  <label class="field-l">Vendor status<select id="vs" data-act="vendorStatus" data-id="${v.id}"><option value="approved" ${v.status === 'approved' ? 'selected' : ''}>Approved</option><option value="pending" ${v.status === 'pending' ? 'selected' : ''}>Pending onboarding</option><option value="blocked" ${v.status === 'blocked' ? 'selected' : ''}>Blocked</option></select></label></div>`);
+};
+document.addEventListener('change', e => { const t = e.target.closest('[data-act="vendorStatus"]'); if (t) { const v = V(t.dataset.id), old = v.status; v.status = t.value; AUDIT.unshift({ ts: new Date(TODAY.getTime() + 800000), actor: { t: 'Human', n: ROLES[S.role].name }, type: 'Master data changed', summary: `Changed status of ${v.short} from ${old} to ${v.status}`, obj: { k: 'Vendor', id: v.id, href: '#s6' }, outcome: null, payload: { before: old, after: v.status } }); toast(`${v.short} is now ${V_CHIP[v.status][1].toLowerCase()}. Recorded in the audit log.`); route(true); } });
+ACT.bankForm = t => {
+  const v = V(t.dataset.id);
+  $('#bank-form').innerHTML = `<div class="stack-s fade-in" style="margin-top:14px;border-top:1px solid var(--line);padding-top:14px"><div class="params"><label class="field-l">Bank<input type="text" id="nb" value="${v.id === 'V-102' ? 'Riverbend Co-operative Bank' : ''}"></label><label class="field-l">Account<input type="text" id="na" value="${v.id === 'V-102' ? '5020 0091 2334 7' : ''}"></label><label class="field-l">IFSC<input type="text" id="ni" value="${v.id === 'V-102' ? 'RBCB0000412' : ''}"></label></div>
+  <label class="field-l">Verified by<input type="text" id="nv" value="${ROLES[S.role].name} and a second person"></label><label class="field-l">Reason (required)<textarea id="nr" placeholder="Written request received on letterhead and confirmed by phone"></textarea></label><button class="btn primary" data-act="saveBank" data-id="${v.id}">Save bank details</button></div>`;
+};
+ACT.saveBank = t => { const v = V(t.dataset.id), r = $('#nr').value.trim(); if (r.length < 10) { toast('Add a reason of at least 10 characters. It is stored in the audit log.'); return; } const before = `${v.bank}, ${v.acct}`; v.bank = $('#nb').value || v.bank; v.acct = $('#na').value || v.acct; v.ifsc = $('#ni').value || v.ifsc; v.changed = fmtD(TODAY); AUDIT.unshift({ ts: new Date(TODAY.getTime() + 900000), actor: { t: 'Human', n: ROLES[S.role].name }, type: 'Master data changed', summary: `Changed bank details for ${v.short}`, obj: { k: 'Vendor', id: v.id, href: '#s6' }, outcome: null, payload: { before, after: `${v.bank}, ${v.acct}`, reason: r, verified_by: $('#nv').value } }); closeSheet(); toast('Bank details updated and recorded. Re-run the held invoice to clear the hold.'); route(true); };
+
+/* ===== S7 Rules and tolerances ===== */
+const BAND0 = { pass_pct: 0.5, pass_abs: 50, note_pct: 2, note_abs: 5000, review_pct: 10 };
+const DEF = {
+  R02: { ok: 0.90, min: 0.75 }, R03: { days: 180 }, R06: { review: 0.60, reject: 0.85 }, R07: { score: 0.90, gap: 0.20, ceil: 100000 }, R09: { pct: 10 },
+  R10: { ...BAND0 }, R11: { ...BAND0, pass_abs: 0, note_abs: 0 }, R12: { ...BAND0 }, R13: { pass: 1, note: 10, review: 100 }, R14: { pass: 1, note: 10 }, R15: { cap: 1000000 },
+};
+const LABELS = { ok: ['Fine at or above', 'conf'], min: ['Hold below', 'conf'], days: ['Note when older than (days)', 'n'], review: ['Send to review from', 'x'], reject: ['Reject from', 'x'], score: ['Best score needed', 'x'], gap: ['Runner-up gap needed', 'x'], ceil: ['Invoice ceiling (₹)', '₹'], pct: ['Review up to (% of invoice)', '%'], pass_pct: ['Passes silently up to (%)', '%'], pass_abs: ['…or up to (₹)', '₹'], note_pct: ['Note up to (%)', '%'], note_abs: ['…and no more than (₹)', '₹'], review_pct: ['Review up to (%)', '%'], pass: ['Passes up to (₹)', '₹'], note: ['Note up to (₹)', '₹'], cap: ['Manager sign-off above (₹)', '₹'] };
+const CFG = JSON.parse(JSON.stringify(DEF)); const CFG_ON = {}; RULES.forEach(r => CFG_ON[r.id] = true);
+const GLOBAL = { cap: 1000000, split: 10000, sample: 10, sla: 3, auto: true, baseline: 9, dateOrder: 'Day first', currency: '₹' };
+const S7 = { open: new Set(), logv: [
+  { v: 14, by: 'Rahul Mehta', when: '14 Nov 2026, 11:08', what: 'R10 Unit price: note band 1.5% to 2.0%', why: 'Aligned with contract terms for office supplies' },
+  { v: 13, by: 'Rahul Mehta', when: '3 Nov 2026, 15:20', what: 'R07 PO resolved: ceiling ₹50,000 to ₹1,00,000', why: 'Small vendors often leave the PO off; ceiling raised for implied matches' },
+  { v: 12, by: 'Meera Rao', when: '21 Oct 2026, 10:02', what: 'Global: hold SLA 5 to 3 business days', why: 'Audit recommendation' },
+  { v: 11, by: 'Rahul Mehta', when: '9 Oct 2026, 17:44', what: 'R13 Tax maths: review step ₹50 to ₹100', why: 'Per-line rounding in freight invoices' },
+  { v: 1, by: 'System', when: '1 Sep 2026, 09:00', what: 'Shipped defaults loaded', why: 'Initial configuration' },
+] };
+
+function sentence(id) {
+  const p = CFG[id], f = (n, d = 2) => { const t = (+n).toFixed(d); return t.includes('.') ? t.replace(/\.?0+$/, '') : t; };
+  switch (id) {
+    case 'R10': case 'R11': case 'R12': { const lab = { R10: 'unit price', R11: 'quantity over what remains', R12: 'cumulative billed value' }[id]; return `Allow a ${lab} up to ${f(p.note_pct)}% above the PO${id === 'R11' ? '' : ', and no more than ' + inr(p.note_abs)}, with a note. Up to ${f(p.pass_pct)}%${id === 'R11' ? '' : ' or ' + inr(p.pass_abs)} passes silently. Up to ${f(p.review_pct)}% goes to review. Above that is rejected.`; }
+    case 'R02': return `Key fields need confidence of ${f(p.ok)} or more. Between ${f(p.min)} and ${f(p.ok)} we approve with a note. Below ${f(p.min)} we hold the invoice.`;
+    case 'R03': return `The date cannot be in the future or before the PO date. Dates older than ${p.days} days get a note.`;
+    case 'R06': return `Reject if the invoice is ${f(p.reject * 100, 0)}% or more similar to an earlier one. Send to review from ${f(p.review * 100, 0)}% up to ${f(p.reject * 100, 0)}%.`;
+    case 'R07': return `Use the PO on the invoice. With no PO, infer it only when the best match scores ${f(p.score * 100, 0)}% or more, beats the runner-up by ${f(p.gap * 100, 0)} points and the invoice is up to ${inr(p.ceil)}.`;
+    case 'R09': return `Lines that are not on the PO go to review when they are up to ${f(p.pct)}% of the invoice, and are rejected above that.`;
+    case 'R13': return `GST must equal the taxable value times the rate. Up to ${inr(p.pass)} passes, up to ${inr(p.note)} gets a note, up to ${inr(p.review)} goes to review and more is rejected.`;
+    case 'R14': return `Subtotal plus tax must equal the stated total. Up to ${inr(p.pass)} passes, up to ${inr(p.note)} gets a note. Above that we reject, or hold if we may have misread.`;
+    case 'R15': return `Any invoice above ${inr(p.cap)} needs a manager to sign it off.`;
+    default: return RULES.find(r => r.id === id).sent;
+  }
+}
+function validate(id) {
+  const p = CFG[id], e = {};
+  Object.entries(p).forEach(([k, v]) => { if (!(v >= 0) || isNaN(v)) e[k] = 'Enter a number of zero or more.'; });
+  if (['R10', 'R11', 'R12'].includes(id)) { if (p.pass_pct > p.note_pct) e.pass_pct = 'Passes-silently limit cannot be above the note limit.'; if (p.note_pct > p.review_pct) e.note_pct = 'The note limit cannot be above the review limit.'; if (p.pass_abs > p.note_abs) e.pass_abs = 'Cannot be above the note amount.'; }
+  if (id === 'R02' && p.min >= p.ok) e.min = 'Hold limit must be below the fine limit.';
+  if (id === 'R06' && p.review >= p.reject) e.review = 'Review line must be below the reject line.';
+  if (id === 'R13' && !(p.pass <= p.note && p.note <= p.review)) e.note = 'Steps must increase: pass, note, review.';
+  if (id === 'R14' && p.pass > p.note) e.pass = 'Passes limit cannot be above the note limit.';
+  return e;
+}
+const dirty = id => JSON.stringify(CFG[id]) !== JSON.stringify(DEF[id]);
+const dirtyIds = () => Object.keys(DEF).filter(dirty);
+function impact() {
+  const ids = dirtyIds(); if (!ids.length) return null; let toReview = 0, toNote = 0;
+  ids.forEach(id => { const p = CFG[id], d = DEF[id]; const k = Object.keys(p).find(k => p[k] !== d[k]); const ch = Math.abs(p[k] - d[k]); const tighter = (['pass_pct', 'note_pct', 'review_pct', 'pass_abs', 'note_abs', 'ok', 'review', 'reject', 'ceil', 'pct', 'days', 'pass', 'note', 'cap'].includes(k)) ? (['ok', 'min'].includes(k) ? p[k] > d[k] : p[k] < d[k]) : p[k] < d[k]; const n = Math.max(1, Math.round(ch / (d[k] || 1) * 4)); tighter ? toReview += n : toNote += n; });
+  return { toReview, toNote, total: toReview + toNote };
+}
+
+function ruleRow(r) {
+  const open = S7.open.has(r.id), p = CFG[r.id], has = !!p, err = has ? validate(r.id) : {}, on = CFG_ON[r.id], d = has && dirty(r.id);
+  const inputs = has ? `<div class="params">${Object.keys(p).map(k => `<label class="field-l ${err[k] ? 'bad' : ''}">${LABELS[k][0]}<input type="number" step="any" data-rule="${r.id}" data-k="${k}" id="in-${r.id}-${k}" value="${p[k]}" aria-invalid="${!!err[k]}">${err[k] ? `<span class="err-t">${err[k]}</span>` : ''}</label>`).join('')}</div>` : `<p class="small sec">This rule has no thresholds. It is a yes or no check.${r.hard ? ' It is a hard stop and cannot be switched off.' : ''}</p>`;
+  const sevOpts = ['R10', 'R11', 'R12'].includes(r.id) ? `<div class="row wrap gap-s small sec" style="margin-top:10px"><span>Severity for each band:</span><span class="chip s-auto">Passes</span>${ic('arrow-r', 'sm')}<span class="chip s-note">Note</span>${ic('arrow-r', 'sm')}<span class="chip s-review">Review</span>${ic('arrow-r', 'sm')}<span class="chip s-reject">Reject</span><span class="muted">(fixed bands, thresholds editable)</span></div>` : '';
+  return `<div class="rule-row ${open ? 'open' : ''}" id="rr-${r.id}"><div><button class="toggle" role="switch" aria-checked="${on}" ${r.hard ? 'disabled' : ''} data-act="toggleRule" data-id="${r.id}" aria-label="${r.name} enabled" ${r.hard ? 'data-tip="Hard-stop rules cannot be disabled"' : ''}></button></div>
+    <div class="grow" style="min-width:0"><h4>${r.name}<span class="rid">${r.id}</span>${r.hard ? '<span class="pill">' + ic('lock', 'sm') + 'Hard stop</span>' : ''}${d ? '<span class="pill accent" id="bd-' + r.id + '">Edited</span>' : '<span class="pill" id="bd-' + r.id + '">Default</span>'}</h4><p class="sec" style="margin-top:3px" id="sn-${r.id}">${esc(sentence(r.id))}</p></div>
+    <div class="rr-act"><button class="btn sm" data-act="editRule" data-id="${r.id}">${ic('edit', 'sm')}${open ? 'Close' : 'Edit'}</button></div>
+    <div class="editor">${inputs}${sevOpts}<div class="preview-sent"><b>Preview.</b> <span id="pv-${r.id}">${esc(sentence(r.id))}</span></div></div></div>`;
+}
+function renderS7() {
+  const groups = ['Fields', 'Vendor', 'Duplicate', 'Purchase order', 'Numbers']; const di = dirtyIds(), im = impact();
+  const bad = di.some(id => Object.keys(validate(id)).length);
+  return `${pageHead('Rules and tolerances', 'Every check in plain language. Change a number, see the sentence change, and see what it would do to past decisions.', `<span class="pill ${di.length ? 'accent' : ''}" id="dirty-pill">${di.length ? di.length + ' unsaved change' + (di.length > 1 ? 's' : '') : 'Rule set version 14'}</span><button class="btn" data-act="revertDefaults">Revert to defaults</button><button class="btn" data-act="revertPrev">Revert to previous version</button><button class="btn primary" id="save-rules" data-act="saveRules" ${!di.length || bad ? 'disabled' : ''}>Save with reason</button>`)}
+  <div class="two-col">
+    <div class="stack">${groups.map(g => `<div class="card"><div class="card-h" style="padding-bottom:10px;border-bottom:1px solid var(--line)"><h3>${g}</h3><span class="muted small">${RULES.filter(r => r.grp === g).map(r => r.id).join(', ')}</span></div>${RULES.filter(r => r.grp === g).map(ruleRow).join('')}</div>`).join('')}</div>
+    <div class="stack" style="position:sticky;top:76px">
+      <div class="card" id="impact-card">${impactHTML(im)}</div>
+      <div class="card"><div class="card-h"><h3>Global settings</h3></div><div class="card-b stack-s" style="gap:12px">
+        <label class="field-l">High-value cap (₹)<input type="number" id="g-cap" value="${GLOBAL.cap}" data-g="cap"></label><label class="field-l">Exposure split, clerk up to (₹)<input type="number" id="g-split" value="${GLOBAL.split}" data-g="split"></label>
+        <div class="params"><label class="field-l">Audit sample (%)<input type="number" id="g-sample" value="${GLOBAL.sample}" data-g="sample"></label><label class="field-l">Hold SLA (days)<input type="number" id="g-sla" value="${GLOBAL.sla}" data-g="sla"></label><label class="field-l">Manual minutes<input type="number" id="g-base" value="${GLOBAL.baseline}" data-g="baseline"></label><label class="field-l">Date order<select id="g-do"><option>Day first</option><option>Month first</option></select></label></div>
+        <label class="row"><button class="toggle" role="switch" aria-checked="${GLOBAL.auto}" data-act="toggleAuto" aria-label="Auto-approve enabled"></button><span><b>Auto-approve enabled</b><br><span class="small muted">Turn off to send every invoice to a person.</span></span></label></div></div>
+      <div class="card"><div class="card-h"><h3>Change log</h3></div><div class="card-b"><div class="tl">${S7.logv.map((l, i) => `<div class="ev ${i === 0 ? 'now' : ''}" style="--evc:var(--accent)"><div class="row gap-s"><span class="pill ${i === 0 ? 'accent' : ''}">v${l.v}</span><span class="small muted">${l.when}</span></div><div style="margin-top:2px"><b>${esc(l.what)}</b></div><div class="small sec">${esc(l.by)}: ${esc(l.why)}</div></div>`).join('')}</div></div></div>
+    </div></div>`;
+}
+function impactHTML(im) {
+  return `<div class="card-h"><h3>Impact preview</h3><span class="pill right">Last 90 days</span></div><div class="card-b">${im ? `<p><b>If you save this, ${im.total} of the last 90 days' decisions would change.</b></p><div class="stack-s" style="margin-top:10px">${im.toReview ? `<div class="row gap-s">${chip('note')}${ic('arrow-r', 'sm')}${chip('review')}<b class="right num">${im.toReview}</b></div>` : ''}${im.toNote ? `<div class="row gap-s">${chip('review')}${ic('arrow-r', 'sm')}${chip('note')}<b class="right num">${im.toNote}</b></div>` : ''}</div><p class="small muted" style="margin-top:10px">Existing decisions stay as they are unless you re-run them. <a href="#s1" data-act="toastMsg" data-m="Listing the affected invoices opens in a later release of this mock.">See the list</a></p>` : `<p class="sec">Change a threshold and Ledgerlight shows how many past decisions would flip. Nothing is saved until you give a reason.</p>`}</div>`;
+}
+function s7After() { }
+document.addEventListener('input', e => {
+  const t = e.target.closest('input[data-rule]'); if (!t) return; const id = t.dataset.rule; CFG[id][t.dataset.k] = t.value === '' ? NaN : +t.value;
+  const err = validate(id), row = $('#rr-' + id); const label = t.closest('label'); label.classList.toggle('bad', !!err[t.dataset.k]); let msg = label.querySelector('.err-t'); if (err[t.dataset.k]) { if (!msg) { msg = document.createElement('span'); msg.className = 'err-t'; label.appendChild(msg); } msg.textContent = err[t.dataset.k]; } else if (msg) msg.remove();
+  const s = isNaN(CFG[id][t.dataset.k]) ? sentence(id) : sentence(id); $('#sn-' + id).textContent = s; $('#pv-' + id).textContent = s; const bd = $('#bd-' + id); bd.className = 'pill' + (dirty(id) ? ' accent' : ''); bd.textContent = dirty(id) ? 'Edited' : 'Default';
+  refreshS7();
+});
+function refreshS7() { const di = dirtyIds(), bad = di.some(id => Object.keys(validate(id)).length); const sv = $('#save-rules'); if (sv) sv.disabled = !di.length || bad; const dp = $('#dirty-pill'); if (dp) { dp.className = 'pill ' + (di.length ? 'accent' : ''); dp.textContent = di.length ? di.length + ' unsaved change' + (di.length > 1 ? 's' : '') : 'Rule set version 14'; } const ic2 = $('#impact-card'); if (ic2) ic2.innerHTML = impactHTML(impact()); }
+document.addEventListener('input', e => { const g = e.target.closest('[data-g]'); if (g) GLOBAL[g.dataset.g] = +g.value; });
+ACT.editRule = t => { const id = t.dataset.id; S7.open.has(id) ? S7.open.delete(id) : S7.open.add(id); const row = $('#rr-' + id); row.classList.toggle('open'); t.innerHTML = ic('edit', 'sm') + (S7.open.has(id) ? 'Close' : 'Edit'); };
+ACT.toggleRule = t => { const id = t.dataset.id; CFG_ON[id] = !CFG_ON[id]; t.setAttribute('aria-checked', CFG_ON[id]); toast(`${id} is now ${CFG_ON[id] ? 'on' : 'off'}. The change takes effect when you save with a reason.`); };
+ACT.toggleAuto = t => { GLOBAL.auto = !GLOBAL.auto; t.setAttribute('aria-checked', GLOBAL.auto); };
+ACT.revertDefaults = () => { Object.keys(DEF).forEach(k => CFG[k] = JSON.parse(JSON.stringify(DEF[k]))); route(true); toast('All thresholds are back to the shipped defaults. Nothing is saved yet.'); };
+ACT.revertPrev = () => toast('Rule set version 14 is already the latest. Version 13 can be restored once a newer version exists.');
+ACT.saveRules = () => {
+  const ids = dirtyIds(); openModal(`<div class="sheet-h"><h3>Save ${ids.length} change${ids.length > 1 ? 's' : ''}</h3><button class="icon-btn right" data-act="closeModal" aria-label="Close">${ic('x')}</button></div><div class="sheet-b"><div class="small sec">${ids.map(id => `<div><b>${id}</b> ${esc(sentence(id))}</div>`).join('')}</div>${impactHTML(impact()).replace('card-h', 'row').replace('card-b', 'stack-s')}<label class="field-l">Reason for the change (required)<textarea id="sv-why" placeholder="For example: aligned with the new contract terms"></textarea></label></div><div class="sheet-f"><button class="btn" data-act="closeModal">Cancel</button><button class="btn primary" id="sv-go" data-act="confirmSave" disabled>Save settings</button></div>`);
+  $('#sv-why').oninput = () => { $('#sv-go').disabled = $('#sv-why').value.trim().length < 10; };
+};
+ACT.confirmSave = () => {
+  const ids = dirtyIds(), why = $('#sv-why').value.trim(), v = S7.logv[0].v + 1;
+  S7.logv.unshift({ v, by: ROLES[S.role].name, when: fmtD(TODAY) + ', ' + fmtT(new Date(TODAY.getTime() + 600000)), what: ids.map(id => `${id} ${RULES.find(r => r.id === id).name}`).join(', ') + ' changed', why });
+  ids.forEach(id => { DEF[id] = JSON.parse(JSON.stringify(CFG[id])); });
+  AUDIT.unshift({ ts: new Date(TODAY.getTime() + 600000), actor: { t: 'Human', n: ROLES[S.role].name }, type: 'Settings changed', summary: `Saved rule set version ${v}: ${ids.join(', ')} changed`, obj: { k: 'Setting', id: ids[0], href: '#s7' }, outcome: null, payload: { version: `${v - 1} to ${v}`, reason: why, changed: ids.join(', ') } });
+  closeModal(); toast('Settings saved. New runs use these values. Existing decisions are unchanged unless you re-run them.'); route(true);
+};
+
+/* ===== S8 Audit log ===== */
+const STATE8 = { actor: 'all', type: 'all', user: 'all', range: 90, q: '', inv: null, open: new Set(), limit: 30 };
+const EVT_TYPES = ['Run created', 'Stage completed', 'Rule evaluated', 'Decision made', 'Override', 'Field corrected', 'Master data changed', 'Settings changed', 'Export'];
+const evKey = e => e.ts.getTime() + '|' + e.type + '|' + e.obj.id;
+function auditFiltered() {
+  const S8 = STATE8; const since = new Date(TODAY.getTime() - S8.range * 86400000 - 86400000);
+  return AUDIT.filter(e => e.ts >= since && (S8.actor === 'all' || e.actor.t === S8.actor) && (S8.type === 'all' || e.type === S8.type) && (S8.user === 'all' || e.actor.n === S8.user) && (!S8.inv || e.obj.id === S8.inv) && (!S8.q || (e.summary + e.obj.id + e.actor.n + e.type).toLowerCase().includes(S8.q.toLowerCase()))).sort((a, b) => b.ts - a.ts);
+}
+const actorHTML = a => `<span class="actor"><span class="av ${a.t === 'System' ? 'sys' : a.t === 'AI model' ? 'ai' : 'hum'}">${a.t === 'System' ? ic('gear', 'sm') : a.t === 'AI model' ? ic('cpu', 'sm') : a.n.split(' ').map(x => x[0]).join('')}</span><span><div style="font-weight:600;font-size:13px">${esc(a.n)}</div><div class="tiny muted">${a.t}</div></span></span>`;
+function payloadHTML(e) {
+  const p = e.payload || {}; let h = '';
+  if (p.before !== undefined && p.after !== undefined) h += `<div class="diffbox"><div class="bf"><div class="upper">Before</div>${esc(p.before)}</div><div class="af"><div class="upper">After</div>${esc(p.after)}</div></div>`;
+  const rest = Object.entries(p).filter(([k]) => !['before', 'after'].includes(k));
+  if (rest.length) h += `<dl class="kv" style="margin-top:${h ? 12 : 0}px">${rest.map(([k, v]) => `<dt>${esc(k.replace(/_/g, ' '))}</dt><dd>${typeof v === 'object' ? esc(JSON.stringify(v)) : esc(v)}</dd>`).join('')}</dl>`;
+  return (h || '<span class="muted">No extra details.</span>') + `<div style="margin-top:10px"><a href="#" data-act="viewJson" data-k="${esc(evKey(e))}" class="small">View JSON</a><pre class="json" hidden style="margin-top:8px;border-radius:8px;padding:10px 12px">${esc(JSON.stringify({ ts: e.ts.toISOString(), actor: e.actor, type: e.type, object: e.obj, payload: p }, null, 2))}</pre></div>`;
+}
+function renderS8() {
+  const S8 = STATE8, list = auditFiltered(), shown = list.slice(0, S8.limit);
+  const users = ['all', 'Priya Nair', 'Rahul Mehta'];
+  const inv = S8.inv ? RUNS.find(r => r.invNo === S8.inv) : null;
+  const trace = S8.inv ? `<div class="card panel"><h3>${ic('link', 'sm')}Trace for ${esc(S8.inv)}<span class="muted small" style="font-weight:500">from upload to payment queue</span><button class="btn sm right" data-act="clearInv">Clear invoice filter</button></h3>${list.length ? `<div class="tl">${list.slice().reverse().map(e => `<div class="ev" style="--evc:${e.outcome ? OUT_COLOR[e.outcome] : 'var(--line-2)'}"><div class="small muted">${fmtDS(e.ts)}, ${fmtT(e.ts)} · ${esc(e.actor.n)} · ${e.type}</div><div>${esc(e.summary)}</div></div>`).join('')}</div>` : '<div class="muted">No events for this invoice.</div>'}${inv ? `<div style="margin-top:12px"><a class="btn sm" href="#s4-${inv.key}">Open decision detail ${ic('arrow-r', 'sm')}</a></div>` : ''}</div>` : '';
+  const rows = shown.map(e => { const k = evKey(e), open = S8.open.has(k); return `<tr class="link audit-row ${open ? 'open' : ''}" data-act="auditRow" data-k="${esc(k)}"><td class="nowrap"><div style="font-weight:600">${fmtDS(e.ts)}, ${fmtT(e.ts)}</div><div class="tiny muted">${e.ts.getFullYear()}</div></td><td>${actorHTML(e.actor)}</td><td style="min-width:260px"><span class="tag">${e.type}</span><div style="margin-top:4px">${esc(e.summary)}</div></td><td class="nowrap"><a href="${e.obj.href}" data-act="objLink" data-id="${esc(e.obj.id)}" data-kind="${e.obj.k}"><span class="muted small">${e.obj.k}</span> <b class="mono">${esc(e.obj.id)}</b></a></td><td>${e.outcome ? chip(e.outcome) : ''}</td><td class="c">${ic(open ? 'chev-u' : 'chev-d', 'sm')}</td></tr>${open ? `<tr class="payload" style="display:table-row"><td colspan="6">${payloadHTML(e)}</td></tr>` : ''}`; }).join('');
+  return `${pageHead('Audit log', 'Everything the system did and every decision a person made, with the reason.', `<button class="btn" data-act="auditExport" data-f="CSV">${ic('download', 'sm')}Export CSV</button><button class="btn" data-act="auditExport" data-f="JSON">${ic('download', 'sm')}Export JSON</button>`)}
+  <div class="stack">
+    <div class="banner info">${ic('lock', 'lg')}<span><b>Entries cannot be edited or deleted.</b> This log is append-only. Corrections are recorded as new entries.</span></div>
+    ${trace}
+    <div class="card"><div class="row wrap" style="padding:14px 16px">
+      <div class="search grow" style="min-width:220px">${ic('search')}<input type="search" id="a-q" placeholder="Search invoice, PO, vendor, person or text" value="${esc(S8.q)}" aria-label="Search the audit log"></div>
+      <label class="row gap-s small sec">Dates<select id="a-r" data-act="a8" data-f="range">${[7, 30, 90].map(n => `<option value="${n}" ${S8.range === n ? 'selected' : ''}>Last ${n} days</option>`).join('')}</select></label>
+      <label class="row gap-s small sec">Actor<select id="a-a" data-act="a8" data-f="actor"><option value="all">Anyone</option><option ${S8.actor === 'System' ? 'selected' : ''}>System</option><option ${S8.actor === 'AI model' ? 'selected' : ''}>AI model</option><option ${S8.actor === 'Human' ? 'selected' : ''}>Human</option></select></label>
+      <label class="row gap-s small sec">Person<select id="a-u" data-act="a8" data-f="user">${users.map(u => `<option value="${u}" ${S8.user === u ? 'selected' : ''}>${u === 'all' ? 'Anyone' : u}</option>`).join('')}</select></label>
+      <label class="row gap-s small sec">Event<select id="a-t" data-act="a8" data-f="type"><option value="all">All events</option>${EVT_TYPES.map(t => `<option ${S8.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select></label></div>
+    <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Time</th><th>Actor</th><th>Event</th><th>Object</th><th>Outcome</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="6"><div class="empty"><h4>No events match</h4><p>Clear the filters to see everything.</p><p style="margin-top:10px"><button class="btn" data-act="a8clear">Clear filters</button></p></div></td></tr>`}</tbody></table></div>
+    <div class="pager"><span>Showing ${shown.length} of ${list.length} events, newest first</span>${shown.length < list.length ? `<button class="btn sm right" data-act="a8more">Show more</button>` : ''}</div></div></div>`;
+}
+function s8After() { const q = $('#a-q'); if (q) q.oninput = () => { STATE8.q = q.value; STATE8.limit = 30; const p = q.selectionStart; route(true); const n = $('#a-q'); n.focus(); n.setSelectionRange(p, p); }; }
+document.addEventListener('change', e => { const t = e.target.closest('[data-act="a8"]'); if (t) { STATE8[t.dataset.f] = t.dataset.f === 'range' ? +t.value : t.value; STATE8.limit = 30; route(true); } });
+ACT.auditRow = (t, e) => { if (e.target.closest('a')) return; const k = t.dataset.k; STATE8.open.has(k) ? STATE8.open.delete(k) : STATE8.open.add(k); route(true); };
+ACT.viewJson = (t, e) => { e.preventDefault(); const pre = t.nextElementSibling; pre.hidden = !pre.hidden; };
+ACT.a8clear = () => { Object.assign(STATE8, { actor: 'all', type: 'all', user: 'all', q: '', inv: null, range: 90 }); route(true); };
+ACT.a8more = () => { STATE8.limit += 30; route(true); };
+ACT.clearInv = () => { STATE8.inv = null; route(true); };
+ACT.auditFor = t => { STATE8.inv = t.dataset.inv; STATE8.q = ''; STATE8.type = 'all'; STATE8.actor = 'all'; STATE8.user = 'all'; STATE8.open.clear(); };
+ACT.objLink = t => { if (t.dataset.kind === 'Invoice') { /* navigates via href */ } };
+ACT.auditExport = t => { toast(`Audit log exported as ${t.dataset.f}. The export itself is recorded below.`); AUDIT.unshift({ ts: new Date(TODAY.getTime() + 1000000), actor: { t: 'Human', n: ROLES[S.role].name }, type: 'Export', summary: `Exported the audit log (${t.dataset.f}), ${auditFiltered().length} events`, obj: { k: 'Export', id: 'audit.' + t.dataset.f.toLowerCase(), href: '#s8' }, outcome: null, payload: { filter: 'Current filters', rows: auditFiltered().length } }); route(true); };
+
+/* ===== Shell, router, boot ===== */
+const S = { role: 'clerk', theme: 'auto' };
+const NAV = [
+  ['s1', 'Dashboard', 'dash', '#s1'], ['s2', 'New run', 'upload', '#s2'], ['s3', 'Live run', 'bolt', '#s3'], ['s4', 'Invoice decision', 'check-circle', '#s4-ec1'],
+  ['s5', 'Review queue', 'queue', '#s5'], ['s6', 'Purchase orders and vendors', 'db', '#s6'], ['s7', 'Rules and tolerances', 'sliders', '#s7'], ['s8', 'Audit log', 'scroll', '#s8'],
+];
+const EC_NAV = [['ec1', 'EC1', 'Kestrel, split PO'], ['ec2', 'EC2', 'Brightline, duplicate'], ['ec3', 'EC3', 'Greenleaf, blurry scan'], ['ec4', 'EC4', 'Corevolt, bank change']];
+const LOGO = `<svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="#2c55d9"/><path d="M9 22V10m0 12h14" stroke="#fff" stroke-width="2.6" stroke-linecap="round" fill="none"/><path d="M13 18l3-3 3 2 4-5" stroke="#9ff0c5" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>`;
+
+function shell() {
+  $('#root').innerHTML = `<div class="app">
+  <aside class="rail" id="rail" aria-label="Main navigation"><div class="brand">${LOGO}Ledgerlight</div>
+    <nav class="nav" id="nav">${NAV.map(([k, n, i, h]) => `<a href="${h}" data-nav="${k}">${ic(i)}<span>${n}</span>${k === 's5' ? `<span class="badge" id="nav-badge">${openExcCount()}</span>` : ''}</a>`).join('')}</nav>
+    <div class="rail-label">Demo cases</div><nav class="nav" id="nav-ec">${EC_NAV.map(([k, c, n]) => `<a href="#s4-${k}" data-ec="${k}"><span class="mono" style="font-size:11px;opacity:.7;width:24px">${c}</span><span>${n}</span></a>`).join('')}</nav>
+    <div class="rail-foot"><div class="row gap-s"><span class="live-dot"></span><span>Live stream connected</span></div><div class="tiny">All names, vendors and bank accounts are fictional. Sample data as of 16 Nov 2026.</div></div></aside>
+  <div class="main"><header class="topbar"><button class="icon-btn menu-btn" data-act="menu" aria-label="Open navigation">${ic('menu')}</button><div class="crumb" id="crumb">Dashboard</div>
+    <div class="row right gap-s"><div class="seg role-seg" role="group" aria-label="Role switcher">${Object.entries(ROLES).map(([k, r]) => `<button data-act="role" data-r="${k}" aria-pressed="${S.role === k}">${r.label}</button>`).join('')}</div>
+      <div style="position:relative"><button class="btn sm" data-act="demoMenu" aria-haspopup="true">${ic('sliders', 'sm')}Demo mode</button><div class="menu" id="demo-menu"><div><b>Demo mode</b><div class="small muted">Controls for presenting. Nothing here changes real data.</div></div><button class="btn sm" data-act="resetDemo">${ic('refresh', 'sm')}Reset demo data</button><label class="row"><button class="toggle" role="switch" aria-checked="${STATE2.opts.cache}" data-act="optCache2" aria-label="Use saved AI results"></button><span class="small">Use saved AI results</span></label><div><div class="small muted" style="margin-bottom:4px">Pacing speed</div><div class="seg">${[['0.5', 'Slow'], ['1', 'Normal'], ['2', 'Fast']].map(([s, l]) => `<button data-act="pace2" data-s="${s}" aria-pressed="${RUN.speed === +s}">${l}</button>`).join('')}</div></div></div></div>
+      <button class="icon-btn" data-act="theme" id="theme-btn" aria-label="Switch colour theme" data-tip="Switch colour theme">${ic('moon')}</button></div></header>
+    <main class="page" id="view" tabindex="-1"></main></div></div>`;
+}
+const ROUTES = { s1: [renderS1, s1After], s2: [renderS2, s2After], s3: [renderS3, s3After], s4: [renderS4, null], s5: [renderS5, null], s6: [renderS6, s6After], s7: [renderS7, s7After], s8: [renderS8, s8After] };
+function parseHash() { const m = (location.hash.slice(1) || 's1').match(/^(s[1-8])(?:-([a-z0-9]+))?$/i); return m ? { s: m[1].toLowerCase(), arg: (m[2] || '').toLowerCase() } : { s: 's1', arg: '' }; }
+let LAST = '';
+function route(keep) {
+  const { s, arg } = parseHash(), id = s + '-' + arg;
+  if (keep && s === 's3') return;
+  const y = window.scrollY; clearInterval(S1_TIMER); if (s !== 's3') { stopRun(); document.body.dataset.s3 = ''; }
+  if (!keep) { closeSheet(true); closeModal(true); }
+  const [render, after] = ROUTES[s]; $('#view').innerHTML = render(arg); document.body.dataset.route = s + (arg ? '-' + arg : ''); if (after) after(arg);
+  $$('#nav a').forEach(a => a.classList.toggle('on', a.dataset.nav === s)); $$('#nav-ec a').forEach(a => a.classList.toggle('on', s === 's4' && (a.dataset.ec === arg || ALIAS[a.dataset.ec] === arg)));
+  const inv = INV[arg] || INV[ALIAS[arg]]; const name = NAV.find(n => n[0] === s)[1];
+  $('#crumb').innerHTML = s === 's4' && inv ? `<span class="muted">Invoice decision</span>${ic('chev-r', 'sm')}${esc(inv.vname)} ${esc(inv.invNo)}` : s === 's3' ? `<span class="muted">Live run</span>${ic('chev-r', 'sm')}${esc((INV[arg] || INV.si05).file)}` : name;
+  $('#rail').classList.remove('open'); updateNavBadge();
+  if (keep) window.scrollTo(0, y); else { window.scrollTo(0, 0); }
+  LAST = id;
+}
+window.addEventListener('hashchange', () => route(false));
+ACT.role = t => { S.role = t.dataset.r; $$('.role-seg button').forEach(b => b.setAttribute('aria-pressed', String(b === t))); if (parseHash().s !== 's3') route(true); toast(`Now acting as ${ROLES[S.role].label}, ${ROLES[S.role].name}.`); };
+ACT.menu = () => $('#rail').classList.toggle('open');
+ACT.demoMenu = () => $('#demo-menu').classList.toggle('show');
+ACT.optCache2 = t => { STATE2.opts.cache = !STATE2.opts.cache; t.setAttribute('aria-checked', STATE2.opts.cache); };
+ACT.pace2 = t => { RUN.speed = +t.dataset.s; $$('[data-act="pace2"]').forEach(b => b.setAttribute('aria-pressed', String(b === t))); $$('[data-act="pace"]').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.s === RUN.speed))); };
+ACT.resetDemo = () => { $('#demo-menu').classList.remove('show'); RUNS.forEach(r => { delete r.resolved; delete r.confirmedBy; }); toast('Demo data reset. History, master data and rules are back to the seeded state.'); route(true); updateNavBadge(); };
+ACT.theme = () => {
+  const order = ['auto', 'light', 'dark']; S.theme = order[(order.indexOf(S.theme) + 1) % 3]; applyTheme();
+  try { localStorage.setItem('ll-theme', S.theme); } catch (e) { }
+};
+function applyTheme() {
+  const r = document.documentElement; if (S.theme === 'auto') r.removeAttribute('data-theme'); else r.dataset.theme = S.theme;
+  const b = $('#theme-btn'); if (b) { b.innerHTML = ic(S.theme === 'dark' ? 'sun' : 'moon'); b.dataset.tip = 'Theme: ' + S.theme; }
+}
+document.addEventListener('click', e => { if (!e.target.closest('#demo-menu') && !e.target.closest('[data-act="demoMenu"]')) { const m = $('#demo-menu'); if (m) m.classList.remove('show'); } if (innerWidth <= 900 && !e.target.closest('#rail') && !e.target.closest('[data-act="menu"]')) { const r = $('#rail'); if (r) r.classList.remove('open'); } });
+document.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('.qrow')) { e.preventDefault(); e.target.click(); } });
+
+/* boot */
+try { const t = localStorage.getItem('ll-theme'); if (t) S.theme = t; } catch (e) { }
+shell(); applyTheme(); route(false);
+window.__ledgerlight = { ready: true };

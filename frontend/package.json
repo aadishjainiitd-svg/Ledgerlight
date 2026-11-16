@@ -1,0 +1,24 @@
+{
+  "name": "ledgerlight-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "check": "node e2e/check.js",
+    "demo": "powershell -NoProfile -ExecutionPolicy Bypass -File ../start.ps1",
+    "dev:demo": "powershell -NoProfile -ExecutionPolicy Bypass -File ../start.ps1 -Dev"
+  },
+  "dependencies": {
+    "next": "15.5.29",
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  },
+  "devDependencies": {
+    "autoprefixer": "10.4.21",
+    "playwright": "1.55.0",
+    "postcss": "8.5.6",
+    "tailwindcss": "3.4.17"
+  }
+}

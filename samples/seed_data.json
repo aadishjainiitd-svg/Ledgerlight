@@ -1,0 +1,89 @@
+{
+  "_comment": "Ledgerlight demo master data and history (spec section 9). All vendors, GSTINs, bank accounts and people are fictional. 'Today' is 16 Nov 2026. Amounts in rupees.",
+  "as_of": "2026-11-16",
+  "vendors": [
+    {"id": "V-101", "name": "Brightline Office Supplies Pvt Ltd", "short": "Brightline", "gstin": "27AAFCB4821K1Z3", "status": "approved", "payment_terms_days": 30, "bank_name": "Harbor Union Bank", "bank_account_no": "0123 4567 8901", "bank_ifsc": "HUBK0000214", "bank_changed_at": "2025-03-14", "contact_phone": "+91 22 4018 2290", "contact_email": "accounts@brightline-supplies.example", "aliases": ["Brightline", "Brightline Office Supplies"], "address": "14 Dockyard Road, Mumbai 400010"},
+    {"id": "V-102", "name": "Corevolt Electronics Pvt Ltd", "short": "Corevolt", "gstin": "29AAHCC7710M1Z8", "status": "approved", "payment_terms_days": 45, "bank_name": "Harbor Union Bank", "bank_account_no": "0001 2345 6789", "bank_ifsc": "HUBK0000101", "bank_changed_at": "2024-08-02", "contact_phone": "+91 80 4125 7700", "contact_email": "billing@corevolt-electronics.example", "aliases": ["Corevolt", "Corevolt Electronics"], "address": "22 Electronic City Phase 1, Bengaluru 560100"},
+    {"id": "V-103", "name": "Kestrel Print & Pack", "short": "Kestrel", "gstin": "24AAMFK3302Q1Z6", "status": "approved", "payment_terms_days": 30, "bank_name": "Delta Savings Bank", "bank_account_no": "7712 0034 2214", "bank_ifsc": "DLSB0000220", "bank_changed_at": "2025-01-19", "contact_phone": "+91 79 4003 1182", "contact_email": "accounts@kestrelpack.example", "aliases": ["Kestrel", "Kestrel Print and Pack"], "address": "Plot 88, GIDC Vatva, Ahmedabad 382445"},
+    {"id": "V-104", "name": "Greenleaf Pantry Supplies", "short": "Greenleaf", "gstin": "27AAJFG9054R1Z2", "status": "approved", "payment_terms_days": 15, "bank_name": "Lakeview Bank", "bank_account_no": "3300 1275 5508", "bank_ifsc": "LKVB0000318", "bank_changed_at": "2025-09-30", "contact_phone": "+91 20 4410 6035", "contact_email": "orders@greenleafpantry.example", "aliases": ["Greenleaf", "Greenleaf Pantry"], "address": "5 Market Yard, Pune 411037"},
+    {"id": "V-105", "name": "Meridian Logistics Pvt Ltd", "short": "Meridian", "gstin": "27AABCM6620D1Z9", "status": "approved", "payment_terms_days": 30, "bank_name": "Delta Savings Bank", "bank_account_no": "7712 0098 4410", "bank_ifsc": "DLSB0000220", "bank_changed_at": "2025-06-11", "contact_phone": "+91 22 6120 5544", "contact_email": "billing@meridian-logistics.example", "aliases": ["Meridian", "Meridian Logistics"], "address": "Gala 12, Andheri East, Mumbai 400093"},
+    {"id": "V-106", "name": "Orion Stationers", "short": "Orion", "gstin": "06AAKFO1177P1Z4", "status": "pending", "payment_terms_days": 30, "bank_name": null, "bank_account_no": null, "bank_ifsc": null, "bank_changed_at": null, "contact_phone": "+91 124 455 0182", "contact_email": "sales@orionstationers.example", "aliases": ["Orion"], "address": "Sector 18, Gurugram 122015"}
+  ],
+  "purchase_orders": [
+    {"id": "PO-2026-0998", "vendor_id": "V-101", "issue_date": "2026-09-02", "valid_to": "2026-12-31", "lines": [["CP-A4-75", "Copier paper A4 75gsm", "reams", 400, 250, 18, 0]]},
+    {"id": "PO-2026-1001", "vendor_id": "V-101", "issue_date": "2026-10-02", "valid_to": "2026-12-31", "lines": [["CH-ERG-01", "Ergonomic mesh chair", "nos", 40, 6500, 18, 0], ["DK-STD-02", "Height-adjustable standing desk", "nos", 20, 12000, 18, 0]]},
+    {"id": "PO-2026-1002", "vendor_id": "V-102", "issue_date": "2026-10-12", "valid_to": "2026-12-31", "lines": [["DS-USB-C", "USB-C docking station", "nos", 30, 7200, 18, 0], ["KM-W1", "Wireless keyboard and mouse set", "nos", 30, 1800, 18, 0]]},
+    {"id": "PO-2026-1004", "vendor_id": "V-103", "issue_date": "2026-09-20", "valid_to": "2026-12-31", "lines": [["CTN-L", "Corrugated shipping carton, large", "nos", 10000, 40, 18, 0], ["SETUP-01", "Custom print setup", "lot", 1, 20000, 18, 0]]},
+    {"id": "PO-2026-1005", "vendor_id": "V-104", "issue_date": "2026-11-02", "valid_to": "2026-12-31", "lines": [["PNT-TEA", "Tea premix", "kg", 200, 420, 5, 0], ["PNT-SUG", "Sugar", "kg", 300, 48, 5, 0]]},
+    {"id": "PO-2026-1007", "vendor_id": "V-104", "issue_date": "2026-11-04", "valid_to": "2026-12-31", "lines": [["PNT-CUP", "Paper cup 150 ml", "nos", 25000, 1.6, 12, 0], ["PNT-STR", "Wooden stirrer", "nos", 20000, 0.4, 12, 0]]},
+    {"id": "PO-2026-1008", "vendor_id": "V-102", "issue_date": "2026-10-28", "valid_to": "2026-12-31", "lines": [["NS-24P", "24-port managed switch", "nos", 6, 21000, 18, 0], ["PC-CAT6", "Cat6 patch cable 2 m", "nos", 60, 250, 18, 0]]},
+    {"id": "PO-2026-1009", "vendor_id": "V-105", "issue_date": "2026-10-30", "valid_to": "2026-12-31", "lines": [["FR-MUM-PUN", "Full-truck freight Mumbai to Pune", "trips", 12, 14500, 18, 0]]},
+    {"id": "PO-2026-0968", "vendor_id": "V-103", "issue_date": "2026-08-14", "valid_to": "2026-11-30", "status_override": "closed", "is_seed": true, "lines": [["CTN-M", "Corrugated carton, medium", "nos", 6000, 28, 18, 6000]]},
+    {"id": "PO-2026-0971", "vendor_id": "V-101", "issue_date": "2026-08-21", "valid_to": "2026-11-30", "is_seed": true, "lines": [["FL-A4-01", "Filing folder A4 (box of 50)", "boxes", 120, 780, 18, 120]]},
+    {"id": "PO-2026-0974", "vendor_id": "V-102", "issue_date": "2026-08-25", "valid_to": "2026-11-30", "status_override": "closed", "is_seed": true, "lines": [["MON-27", "27-inch monitor", "nos", 24, 12500, 18, 24]]},
+    {"id": "PO-2026-0977", "vendor_id": "V-105", "issue_date": "2026-09-01", "valid_to": "2026-12-31", "is_seed": true, "lines": [["FR-DEL-NG", "Freight Delhi to Noida", "trips", 30, 6200, 18, 21]]},
+    {"id": "PO-2026-0979", "vendor_id": "V-104", "issue_date": "2026-09-04", "valid_to": "2026-12-31", "is_seed": true, "lines": [["PNT-COF", "Instant coffee 500 g", "nos", 400, 310, 5, 260]]},
+    {"id": "PO-2026-0985", "vendor_id": "V-101", "issue_date": "2026-09-12", "valid_to": "2026-12-31", "is_seed": true, "lines": [["TNR-BK", "Black toner cartridge", "nos", 36, 3450, 18, 0]]}
+  ],
+  "named_history": [
+    {"file": "history/BL-2026-0377.pdf", "decided_at": "2026-10-21T04:42:00Z", "paid_at": "2026-11-05", "expected_outcome": "auto_approve", "source": "email"},
+    {"file": "history/K-1187.pdf", "decided_at": "2026-10-18T10:10:00Z", "expected_outcome": "auto_approve", "source": "email"},
+    {"file": "history/K-1203.pdf", "decided_at": "2026-10-28T05:35:00Z", "expected_outcome": "auto_approve", "source": "email"}
+  ],
+  "synthetic": {
+    "seed": 20261116,
+    "counts": {"auto_approve": 29, "approve_with_note": 10},
+    "catalog": {
+      "V-101": {"po": "PO-2026-0971", "prefix": "BL/2026/0", "serial_from": 300, "item": ["Filing folder A4 (box of 50)", 780, "boxes"], "rate": 18},
+      "V-102": {"po": "PO-2026-0974", "prefix": "CV-", "serial_from": 8700, "item": ["27-inch monitor", 12500, "nos"], "rate": 18},
+      "V-103": {"po": "PO-2026-0968", "prefix": "K/", "serial_from": 1100, "item": ["Corrugated carton, medium", 28, "nos"], "rate": 18},
+      "V-104": {"po": "PO-2026-0979", "prefix": "GL-", "serial_from": 2200, "item": ["Instant coffee 500 g", 310, "nos"], "rate": 5},
+      "V-105": {"po": "PO-2026-0977", "prefix": "MX-", "serial_from": 5400, "item": ["Freight Delhi to Noida", 6200, "trips"], "rate": 18},
+      "V-106": {"po": null, "prefix": "OS/", "serial_from": 140, "item": ["Whiteboard markers (box of 10)", 280, "boxes"], "rate": 18}
+    },
+    "note_reasons": [
+      ["R10", "Price 1.2% above the PO, inside the allowed 2%."],
+      ["R07", "PO inferred at 94% confidence; the invoice had no PO number."],
+      ["R02", "Scan was blurry; total confirmed because the lines add up."],
+      ["R11", "Quantity 1.4% above what remained on the PO."],
+      ["R13", "GST off by ₹6 from rounding, inside the allowed ₹10."],
+      ["R03", "Invoice dated more than 180 days ago."],
+      ["R10", "Price 0.9% above the PO, inside the allowed 2%."],
+      ["R02", "Date could be read two ways; read as day first."],
+      ["R12", "Billed 1.1% above the PO value, inside the allowed 2%."],
+      ["R10", "Price 1.6% above the PO, inside the allowed 2%."]
+    ],
+    "exceptions": [
+      ["route_for_review", "V-101", "R11", "Billed 14 boxes more than remain on the PO (₹12,908 with GST).", 12908, "manager", 2, "Approve what remains, request credit note ₹12,908"],
+      ["route_for_review", "V-102", "R10", "Monitor price 4.2% above the PO (₹21,000 over).", 24780, "manager", 1, "Ask Procurement to confirm the new price"],
+      ["route_for_review", "V-105", "R11", "Three more trips billed than the PO allows (₹43,500 with GST).", 51330, "manager", 3, "Approve 27 trips, request credit note ₹51,330"],
+      ["route_for_review", "V-103", "R10", "Carton price 3.1% above the PO (₹1,848 over).", 2181, "clerk", 0, "Accept if Procurement agreed the new price"],
+      ["route_for_review", "V-104", "R06", "Possible duplicate: 72% similar to an invoice from 3 Nov.", 31500, "manager", 1, "Compare side by side, then accept or reject"],
+      ["route_for_review", "V-101", "R04", "Vendor matched by name only; the GSTIN did not match.", 8200, "clerk", 2, "Confirm the vendor with Procurement"],
+      ["route_for_review", "V-102", "R13", "GST rate is 18% but the PO line says 12%.", 7740, "clerk", 0, "Ask Corevolt which rate applies"],
+      ["route_for_review", "V-105", "R07", "The PO belongs to a different vendor (Kestrel).", 62000, "manager", 1, "Ask Procurement which PO was meant"],
+      ["route_for_review", "V-104", "R10", "Coffee price 2.6% above the PO (₹6,045 over).", 7133, "clerk", 0, "Ask Procurement to confirm the new price"],
+      ["hold_request_info", "V-104", "R01", "Invoice date is missing. We asked Greenleaf for a copy with the date.", 18400, "clerk", 3, "Chase Greenleaf; SLA ends tomorrow"],
+      ["hold_request_info", "V-102", "R02", "Total could not be read with confidence (0.62).", 88500, "clerk", 1, "Ask for a clearer copy of the invoice"],
+      ["hold_request_info", "V-106", "R04", "Vendor is pending onboarding (Orion Stationers).", 22400, "manager", 2, "Finish onboarding, then re-run"],
+      ["hold_request_info", "V-103", "R07", "No PO on the invoice and no plausible match among open POs.", 46200, "clerk", 0, "Ask Procurement or the vendor for the PO"],
+      ["hold_request_info", "V-105", "R01", "Invoice number is missing. We asked Meridian for a corrected copy.", 73160, "clerk", 1, "Chase Meridian for the invoice number"],
+      ["reject", "V-103", "R06", "Exact copy of a file we already processed (same file hash).", 52640, "manager", 1, "Send return notice; do not pay"],
+      ["reject", "V-101", "R10", "Unit price 14% above the PO, so this is a different transaction.", 63200, "clerk", 2, "Send return notice and ask for a reissue"],
+      ["reject", "V-102", "R06", "Same invoice number as an invoice already approved on 30 Oct.", 47200, "manager", 4, "Send return notice; do not pay"],
+      ["reject", "V-105", "R14", "Total does not add up: off by ₹4,800.", 4800, "clerk", 2, "Send return notice and ask for a corrected invoice"]
+    ]
+  },
+  "settings_history": [
+    {"version": 1, "by": "System", "when": "2026-09-01T03:30:00Z", "summary": "Shipped defaults loaded", "reason": "Initial configuration", "patch": {"rules": {"R10": {"note_pct": 1.5}, "R07": {"ceil": 50000}, "R13": {"review": 50}}, "global": {"sla": 5}}},
+    {"version": 11, "by": "Rahul Mehta", "when": "2026-10-09T12:14:00Z", "summary": "R13 Tax maths: review step ₹50 to ₹100", "reason": "Per-line rounding in freight invoices", "patch": {"rules": {"R10": {"note_pct": 1.5}, "R07": {"ceil": 50000}}, "global": {"sla": 5}}},
+    {"version": 12, "by": "Meera Rao", "when": "2026-10-21T04:32:00Z", "summary": "Global: hold SLA 5 to 3 business days", "reason": "Audit recommendation", "patch": {"rules": {"R10": {"note_pct": 1.5}, "R07": {"ceil": 50000}}}},
+    {"version": 13, "by": "Rahul Mehta", "when": "2026-11-03T09:50:00Z", "summary": "R07 PO resolved: ceiling ₹50,000 to ₹1,00,000", "reason": "Small vendors often leave the PO off; ceiling raised for implied matches", "patch": {"rules": {"R10": {"note_pct": 1.5}}}},
+    {"version": 14, "by": "Rahul Mehta", "when": "2026-11-14T05:38:00Z", "summary": "R10 Unit price: note band 1.5% to 2.0%", "reason": "Aligned with contract terms for office supplies", "patch": {}}
+  ],
+  "audit_extras": [
+    {"ts": "2026-11-12T10:00:00Z", "actor_type": "human", "actor_id": "Rahul Mehta", "event_type": "master_data_changed", "object_type": "vendor", "object_id": "V-103", "summary": "Updated Kestrel contact phone", "payload": {"before": {"contact_phone": "+91 79 4003 1100"}, "after": {"contact_phone": "+91 79 4003 1182"}, "verified_by": "Rahul Mehta"}},
+    {"ts": "2026-11-09T04:32:00Z", "actor_type": "human", "actor_id": "Rahul Mehta", "event_type": "master_data_changed", "object_type": "po", "object_id": "PO-2026-1009", "summary": "Added purchase order PO-2026-1009 for Meridian Logistics", "payload": {"before": null, "after": "12 trips x ₹14,500, GST 18%", "source": "CSV import (1 row)"}},
+    {"ts": "2026-11-15T12:32:00Z", "actor_type": "human", "actor_id": "Rahul Mehta", "event_type": "export", "object_type": "export", "object_id": "approved.csv", "summary": "Exported approved invoices (CSV), last 30 days", "payload": {"filter": "Approved, Approved with note"}}
+  ]
+}

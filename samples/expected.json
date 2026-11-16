@@ -1,0 +1,154 @@
+{
+  "as_of": "2026-11-16",
+  "samples": [
+    {
+      "id": "SI-01",
+      "file": "SI-01_brightline_BL-2026-0412.pdf",
+      "vendor": "Brightline Office Supplies Pvt Ltd",
+      "vendor_id": "V-101",
+      "title": "Brightline: happy path",
+      "description": "Clean PDF, tax separate, PO printed on the invoice",
+      "tags": [
+        "text PDF",
+        "itemised",
+        "explicit PO"
+      ],
+      "expected_outcome": "auto_approve",
+      "driving_rules": [],
+      "invoice_no": "BL/2026/0412",
+      "gross_paise": 59000000,
+      "edge_case": null,
+      "requires_llm": false
+    },
+    {
+      "id": "SI-02",
+      "file": "SI-02_corevolt_CV-8841.pdf",
+      "vendor": "Corevolt Electronics Pvt Ltd",
+      "vendor_id": "V-102",
+      "title": "Corevolt: bundled, tax inclusive",
+      "description": "Compact layout, one bundled line, prices include GST",
+      "tags": [
+        "text PDF",
+        "bundled line",
+        "tax inclusive",
+        "PO in narrative"
+      ],
+      "expected_outcome": "approve_with_note",
+      "driving_rules": [
+        "R10",
+        "R12"
+      ],
+      "invoice_no": "CV-8841",
+      "gross_paise": 32337900,
+      "edge_case": null,
+      "requires_llm": false
+    },
+    {
+      "id": "SI-03",
+      "file": "SI-03_kestrel_K-1241.pdf",
+      "vendor": "Kestrel Print & Pack",
+      "vendor_id": "V-103",
+      "title": "Kestrel: split PO, third lot",
+      "description": "Third invoice against a split PO, same template as before",
+      "tags": [
+        "text PDF",
+        "split PO",
+        "EC1"
+      ],
+      "expected_outcome": "route_for_review",
+      "driving_rules": [
+        "R11",
+        "R12"
+      ],
+      "invoice_no": "K/1241",
+      "gross_paise": 14160000,
+      "edge_case": "EC1",
+      "requires_llm": false
+    },
+    {
+      "id": "SI-04",
+      "file": "SI-04_brightline_rescan_BL-0377-26.pdf",
+      "vendor": "Brightline Office Supplies Pvt Ltd",
+      "vendor_id": "V-101",
+      "title": "Brightline: re-scanned copy",
+      "description": "Phone photo of an invoice we already paid, skewed",
+      "tags": [
+        "scanned photo",
+        "OCR layer",
+        "EC2"
+      ],
+      "expected_outcome": "reject",
+      "driving_rules": [
+        "R06"
+      ],
+      "invoice_no": "BL-0377-26",
+      "gross_paise": 11800000,
+      "edge_case": "EC2",
+      "requires_llm": false
+    },
+    {
+      "id": "SI-05",
+      "file": "SI-05_greenleaf_GL-2291_scan.pdf",
+      "vendor": "Greenleaf Pantry Supplies",
+      "vendor_id": "V-104",
+      "title": "Greenleaf: blurry scan, no PO",
+      "description": "Degraded scan, no PO number, smudged total",
+      "tags": [
+        "scanned",
+        "image only",
+        "no PO",
+        "EC3"
+      ],
+      "expected_outcome": "approve_with_note",
+      "driving_rules": [
+        "R07",
+        "R02"
+      ],
+      "invoice_no": "GL-2291",
+      "gross_paise": 7875000,
+      "edge_case": "EC3",
+      "requires_llm": true
+    },
+    {
+      "id": "SI-06",
+      "file": "SI-06_corevolt_CV-8902_bank-change.pdf",
+      "vendor": "Corevolt Electronics Pvt Ltd",
+      "vendor_id": "V-102",
+      "title": "Corevolt: new bank details",
+      "description": "Perfect numbers, new bank details in the footer",
+      "tags": [
+        "text PDF",
+        "bank change",
+        "EC4"
+      ],
+      "expected_outcome": "hold_request_info",
+      "driving_rules": [
+        "R05"
+      ],
+      "invoice_no": "CV-8902",
+      "gross_paise": 16638000,
+      "edge_case": "EC4",
+      "requires_llm": false
+    },
+    {
+      "id": "SI-07",
+      "file": "SI-07_meridian_MX-5530_tax-error.pdf",
+      "vendor": "Meridian Logistics Pvt Ltd",
+      "vendor_id": "V-105",
+      "title": "Meridian: GST slip",
+      "description": "Clean PDF with a wrong GST amount (a digit slip)",
+      "tags": [
+        "text PDF",
+        "tax error"
+      ],
+      "expected_outcome": "reject",
+      "driving_rules": [
+        "R13"
+      ],
+      "invoice_no": "MX-5530",
+      "gross_paise": 19532000,
+      "edge_case": null,
+      "requires_llm": false
+    }
+  ]
+}
