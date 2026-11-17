@@ -130,6 +130,8 @@ export default function NewRun() {
           </div>
         </details>
 
+        <div className="row wrap"><button className="btn primary lg" disabled={!ready || !!starting} onClick={startQueue} data-testid="start-processing">Start processing</button><span className="small muted">{ready ? 'The first file opens in the live run view.' : 'Add a PDF or run a sample to begin.'}</span></div>
+
         <div className="row wrap">
           <div><h2 style={{ fontSize: 18 }}>Sample invoices</h2><p className="sec small">Seven invoices that cover every outcome. Pick one to watch it run.</p></div>
           <label className="row right small sec" style={{ cursor: 'pointer' }}><button className="toggle" role="switch" aria-checked={expect} onClick={() => setExpect((e) => !e)} aria-label="Show what to expect" data-testid="toggle-expect" />Show what to expect</label>
@@ -151,7 +153,6 @@ export default function NewRun() {
             );
           })}
         </div>
-        <div className="row wrap"><button className="btn primary lg" disabled={!ready || !!starting} onClick={startQueue} data-testid="start-processing">Start processing</button><span className="small muted">{ready ? 'The first file opens in the live run view.' : 'Add a PDF or run a sample to begin.'}</span></div>
       </div>
     </>
   );
