@@ -133,6 +133,10 @@ def normalise(extraction: dict, *, text_layer: str, scanned_no_text: bool, cfg: 
             amount, calc = int(round(qty * unit)), "amount"
         if unit is None and amount is not None and qty:
             unit, calc = int(round(amount / qty)), "unit_price"
+        if not qty and unit and amount is not None:
+            # No quantity printed: derive it from amount / rate so the price and quantity checks still run.
+            # R10 and R11 send a line whose quantity cannot be worked out to review; they never pass it.
+            qty, calc = round(amount / unit, 3), "qty"
         uom = it.get("uom")
         if not uom and it.get("qty"):
             m = re.search(r"[A-Za-z]+\.?$", str(it.get("qty")).strip())
@@ -238,6 +242,7 @@ def normalise(extraction: dict, *, text_layer: str, scanned_no_text: bool, cfg: 
         "discount_paise": parse_money(extraction.get("discount")) or 0,
         "bank": {"name": fields["bank_name"]["value"], "account": fields["bank_account"]["value"],
                  "ifsc": (str(fields["bank_ifsc"]["value"]).upper() if fields["bank_ifsc"]["value"] else None)},
+        "bank_entries": list(extraction.get("bank_entries") or []),
         "bank_change_notice": bool(extraction.get("bank_change_notice")),
         "bank_change_text": extraction.get("bank_change_text"),
         "reconciled": reconciled,

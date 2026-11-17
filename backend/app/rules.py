@@ -83,6 +83,29 @@ def r01(ctx) -> dict:
                   headline="scanned invoice needs AI extraction; set ANTHROPIC_API_KEY or GROQ_API_KEY.",
                   next_step="Set ANTHROPIC_API_KEY or GROQ_API_KEY on the server and re-run this invoice, or ask the vendor for a "
                             "text PDF of the same invoice.")
+    if status == "wrong_doc_type":
+        from .extract_text import DOC_KIND_LABEL  # noqa: PLC0415
+        kind = ctx.get("doc_kind")
+        label = DOC_KIND_LABEL.get(kind, "document")
+        ref = ctx.get("doc_ref")
+        why, step = {
+            "credit_note": ("A credit note reduces what we owe the vendor. Paying it would pay them money they owe us",
+                            f"Record it in the ledger as a credit{' against invoice ' + ref if ref else ''}. Do not pay it."),
+            "debit_note": ("A debit note asks us to pay more on an earlier invoice, so it needs a person to check it",
+                           "Check the debit note against the original invoice and the PO before anything is paid."),
+            "proforma": ("A proforma invoice is a request for an advance, not a tax invoice, and cannot be paid as one",
+                         "Pay advances only through an approved advance request, then wait for the tax invoice."),
+            "quotation": ("A quotation is an offer, not a bill", "Send it to Procurement. Nothing to pay."),
+            "statement": ("A statement of account lists invoices; each one is paid on its own",
+                          "Reconcile the statement against our ledger. Nothing to pay from it directly."),
+            "delivery_challan": ("A delivery challan records goods sent; it is not a bill",
+                                 "Match it with the goods received note. Wait for the tax invoice."),
+            "purchase_order": ("This is a purchase order, not an invoice", "Nothing to pay. Check why it was sent to AP."),
+        }.get(kind, ("This document is not a tax invoice", "Check the file."))
+        return rr("R01", "hold", f"This is a {label}, not a tax invoice. {why}.",
+                  facts={"reason": "wrong_doc_type", "doc_kind": kind, "doc_label": label, "reference": ref},
+                  headline=f"this is a {label}, not a tax invoice, so it was not processed for payment.",
+                  next_step=step)
     if status == "not_invoice":
         return rr("R01", "hold", "This file does not look like an invoice: no invoice number, date or total was found.",
                   facts={"reason": "not_invoice"}, headline="this file does not look like an invoice.",
@@ -239,6 +262,18 @@ def r05(ctx) -> dict:
     if b["status"] == "not_applicable":
         return rr("R05", "pass", "No bank details printed on the invoice. Nothing to compare.", facts=facts,
                   ok="No bank details on the invoice to compare")
+    if b["status"] == "unreadable":
+        short = (v.get("short") or v["name"]) if v else "the vendor"
+        facts["bank_named"] = b.get("bank_named")
+        return rr("R05", "hold", f"The invoice names {b.get('bank_named')} for payment, but we could not read the "
+                                 f"account number. We have {v.get('bank_name')} on file.", facts=facts, exposure=total,
+                  headline="the invoice names a different bank and we could not read its account number.",
+                  next_step=f"Call {short} on the phone number in our vendor file (not the one on the invoice) and "
+                            f"confirm where they want to be paid before releasing this invoice.")
+    if b.get("offending"):
+        inv_b = {**inv_b, **{k: b["offending"].get(k) for k in ("name", "account", "ifsc")}}
+        facts["invoice_bank"], facts["invoice_account"] = inv_b.get("name"), mask_account(inv_b.get("account"))
+        facts["invoice_ifsc"], facts["bank_entries_seen"] = inv_b.get("ifsc"), b.get("entries_seen")
     if b["status"] == "match":
         return rr("R05", "pass", f"Bank account {mask_account(inv_b.get('account'))} on the invoice matches the account "
                                  f"on file.", facts=facts, ok="Bank account matches the one on file")
@@ -483,6 +518,13 @@ def r10(ctx) -> dict:
     for a, l, pls in _aligned(ctx):
         q = l.get("qty") or 0
         po_unit = sum(pl["unit_price_paise"] for pl in pls)
+        if not q:
+            # Without a quantity the price cannot be checked; never treat that as a match.
+            rows.append({"line_no": l["line_no"], "bundle": False, "po_unit_paise": po_unit, "invoice_unit_paise": None,
+                         "delta_paise": 0, "delta_pct": 0.0, "severity": "review", "band": "quantity not readable",
+                         "qty": None, "noun": unit_noun(pls[0]["description"], pls[0].get("uom"), 1)})
+            worst = "review" if SEV_RANK["review"] > SEV_RANK[worst] else worst
+            continue
         expected = int(round(q * po_unit))
         actual = l.get("pretax_amount_paise") or 0
         delta = actual - expected
@@ -512,6 +554,11 @@ def r10(ctx) -> dict:
         return rr("R10", "pass", f"Unit prices match the PO on all {len(rows)} lines.", facts=facts, threshold=thr,
                   ok="Prices match the PO")
     r = max(rows, key=lambda x: SEV_RANK[x["severity"]] * 1e12 + abs(x["delta_paise"]))
+    if r["band"] == "quantity not readable":
+        return rr("R10", "review", f"We could not read the quantity on line {r['line_no']}, so its price could not be "
+                                   f"checked against the PO ({inr(r['po_unit_paise'])} per {r['noun']}).",
+                  facts=facts, threshold=thr, headline="we could not read a quantity, so the price could not be checked.",
+                  next_step="Check the quantity on the invoice against the goods received, then accept or override.")
     if r["bundle"]:
         what = f"The bundle is priced {inr0(abs(r['delta_paise']))} ({pct_str(r['delta_pct'])}) {'above' if r['delta_paise'] > 0 else 'below'} the PO lines it covers."
     else:
@@ -549,6 +596,12 @@ def r11(ctx) -> dict:
             this_qty[al["po_line_id"]] = this_qty.get(al["po_line_id"], 0) + float(al["qty"] or 0)
     if not this_qty:
         return skip("R11", "no line matched the PO")
+    no_qty = [l["line_no"] for a, l, pls in _aligned(ctx) if not l.get("qty")]
+    if no_qty:
+        return rr("R11", "review", f"We could not read the quantity on line {no_qty[0]}, so we cannot tell how much of "
+                                   f"the PO this invoice uses.", facts={"lines_without_qty": no_qty},
+                  headline="we could not read a quantity, so the PO balance could not be checked.",
+                  next_step="Check the quantity against the goods received, then accept or override.")
     rows, worst, exposure = [], "pass", 0
     for pl in po["lines"]:
         if pl["id"] not in this_qty:
@@ -557,7 +610,12 @@ def r11(ctx) -> dict:
         rem = pl["remaining_qty"]
         over = q - rem
         pct = 100.0 * over / pl["ordered_qty"] if pl["ordered_qty"] else 100.0
-        if over <= 1e-9:
+        pend = pl.get("pending_qty") or 0
+        if over <= 1e-9 and pend and q - (rem - pend) > 1e-9:
+            # Fits only if an invoice waiting in review/hold for the same PO line is ignored. If that one is approved
+            # later, the line is over-billed, so a person must see both together (spec 2.3).
+            sev, bname = "review", "claimed by a pending invoice"
+        elif over <= 1e-9:
             sev, bname = "pass", "within remaining"
         else:
             sev, bname = band(int(round(over * pl["unit_price_paise"])), pct, p)
@@ -567,11 +625,21 @@ def r11(ctx) -> dict:
                      "billed_before": pl["billed_qty"], "pending": pl["pending_qty"], "this_invoice": q,
                      "remaining": rem, "over": round(max(0.0, over), 4), "over_pct": round(pct, 3), "severity": sev,
                      "band": bname, "unit_price_paise": pl["unit_price_paise"], "tax_rate_pct": pl["tax_rate_pct"],
-                     "noun": unit_noun(pl["description"], pl["uom"])})
+                     "noun": unit_noun(pl["description"], pl["uom"]), "pending_from": list(pl.get("pending_from") or [])})
         if SEV_RANK[sev] > SEV_RANK[worst]:
             worst = sev
     facts = {"lines": rows}
     thr = {**p, "allowed": allowed_text("R11", ctx["cfg"])}
+    claimed = [x for x in rows if x["band"] == "claimed by a pending invoice"]
+    if claimed and worst == "review" and not any(x["severity"] == "review" and x not in claimed for x in rows):
+        r = claimed[0]
+        who = ", ".join(r["pending_from"]) or "another invoice"
+        free = max(0.0, r["remaining"] - r["pending"])
+        return rr("R11", "review", f"{fmt_qty(r['this_invoice'])} {r['noun']} billed. {fmt_qty(r['remaining'])} remain on "
+                                   f"the PO, but invoice {who} (waiting in the review queue) already claims "
+                                   f"{fmt_qty(r['pending'])} of them, leaving {fmt_qty(free)}.", facts=facts,
+                  threshold=thr, headline=f"invoice {who}, still in review, already claims part of this PO.",
+                  next_step=f"Decide invoice {who} first, then accept or override this one.")
     if worst == "pass":
         if len(rows) == 1:
             r = rows[0]
@@ -609,6 +677,20 @@ def r12(ctx) -> dict:
              "pct_after": round(100.0 * after / po_sub, 2) if po_sub else 0, "delta_paise": delta,
              "delta_pct": round(pct, 3), "tax_rate_pct": rate * 100}
     thr = {**p, "allowed": allowed_text("R12", ctx["cfg"])}
+    pending = po.get("pending_subtotal_paise") or 0
+    if delta <= 0 and pending and delta + pending > 0:
+        pd = delta + pending
+        psev, _ = band(pd, 100.0 * pd / po_sub if po_sub else 100.0, p)
+        if psev not in ("pass", "note"):
+            who = sorted({n for l in po["lines"] for n in (l.get("pending_from") or [])})
+            names = ", ".join(who) or "another invoice"
+            facts["pending_invoices"] = who
+            return rr("R12", "review", f"Billed so far {inr0(before)} plus this invoice {inr0(this)} fits the PO value of "
+                                       f"{inr0(po_sub)}, but invoice {names} (waiting in the review queue) adds "
+                                       f"{inr0(pending)}. Together they are {inr0(pd)} over.", facts=facts, threshold=thr,
+                      exposure=int(round(pd * (1 + rate))),
+                      headline=f"together with invoice {names}, still in review, this would bill more than the PO.",
+                      next_step=f"Decide invoice {names} first, then accept or override this one.")
     if delta <= 0:
         return rr("R12", "pass", f"Billed so far {inr0(before)} plus this invoice {inr0(this)} is within the PO value of "
                                  f"{inr0(po_sub)}.", facts=facts, threshold=thr,
@@ -734,6 +816,21 @@ def r14(ctx) -> dict:
              "discount_paise": c.get("discount_paise") or 0, "computed_paise": computed, "stated_total_paise": total,
              "diff_paise": diff, "confidences": confs}
     thr = {"pass": p["pass"], "note": p["note"], "confidence": 0.85}
+    lines = c.get("lines") or []
+    if diff <= p["note"] * 100 and lines and all(l.get("amount_paise") is not None for l in lines):
+        # The total can add up while the subtotal includes a charge that is on no line we read (an amount-only row,
+        # or a line the parser skipped). That charge has not been checked against the PO, so a person must look.
+        sums = [sum(l.get("pretax_amount_paise") or l["amount_paise"] for l in lines), sum(l["amount_paise"] for l in lines)]
+        gap = min(abs(sub - s) for s in sums)
+        if gap > p["note"] * 100:
+            line_sum = sums[0]
+            facts.update({"line_sum_paise": line_sum, "unexplained_paise": sub - line_sum})
+            return rr("R14", "review", f"The line items we read add up to {inr0(line_sum)}, but the subtotal is "
+                                       f"{inr0(sub)}. {inr0(abs(sub - line_sum))} is not on any line we could check "
+                                       f"against the PO.", facts=facts, threshold=thr, exposure=abs(sub - line_sum),
+                      headline=f"{inr0(abs(sub - line_sum))} of the subtotal is not on any line we could check.",
+                      next_step="Find the extra charge on the invoice and confirm it was agreed, then accept or "
+                                "override.")
     if diff <= p["pass"] * 100:
         return rr("R14", "pass", f"Subtotal {inr0(sub)} plus tax {inr0(tax)} equals the stated total {inr0(total)}.",
                   facts=facts, threshold=thr, ok="Total adds up")

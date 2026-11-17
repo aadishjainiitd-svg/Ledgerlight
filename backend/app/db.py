@@ -176,12 +176,17 @@ def rows(rs) -> list[dict]:
 
 
 def reset_schema() -> None:
-    """Drop everything and recreate (demo reset). The audit triggers are dropped with the table."""
+    """Drop everything and recreate (demo reset). The audit triggers are dropped with the table.
+
+    extraction_cache is kept: entries are keyed by file hash, prompt version and model, so they stay correct, and a
+    demo reset must not throw away an AI reading that took a minute on a rate-limited provider."""
     with _lock:
         con = connect()
         try:
             tables = [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
             for t in tables:
+                if t == "extraction_cache":
+                    continue
                 con.execute(f"DROP TABLE IF EXISTS {t}")
             con.executescript(SCHEMA)
         finally:

@@ -104,13 +104,18 @@ def accept(invoice_id: str, *, user: str, role: str, note: str | None = None) ->
         inv = con.execute("SELECT current_decision_id, invoice_no_raw FROM invoices WHERE id=?", (invoice_id,)).fetchone()
         if not inv or not inv["current_decision_id"]:
             raise Invalid("This invoice has no decision to accept.")
-        d = con.execute("SELECT outcome FROM decisions WHERE id=?", (inv["current_decision_id"],)).fetchone()
+        d = con.execute("SELECT outcome, explanation, confirmed_by FROM decisions WHERE id=?",
+                        (inv["current_decision_id"],)).fetchone()
+        if d["confirmed_by"]:
+            raise Invalid(f"Already marked reviewed by {d['confirmed_by']}.")
+        step = (db.loads(d["explanation"], {}) or {}).get("next_step")
         ts = db.now_iso()
         con.execute("UPDATE decisions SET confirmed_by=?, confirmed_at=? WHERE id=?", (user, ts, inv["current_decision_id"]))
         db.audit(con, actor_type="human", actor_id=user, event_type="decision_confirmed", object_type="invoice",
                  object_id=invoice_id, invoice_id=invoice_id, outcome=d["outcome"],
-                 summary=f"Confirmed {OUTCOME_LONG[d['outcome']]} for {inv['invoice_no_raw'] or invoice_id}",
-                 payload={"role": role, "note": note})
+                 summary=f"Reviewed {inv['invoice_no_raw'] or invoice_id}: agreed with {OUTCOME_LONG[d['outcome']]}"
+                         + (f". Recommended next step: {step}" if step else ""),
+                 payload={"role": role, "note": note, "recommended_next_step": step})
         return {"decision_id": inv["current_decision_id"], "confirmed_by": user, "confirmed_at": ts}
 
 

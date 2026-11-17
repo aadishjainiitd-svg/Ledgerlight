@@ -333,9 +333,11 @@ def review_queue(*, tab: str = "review", assigned: str | None = None, min_exposu
     counts = {"review": 0, "hold": 0, "rejected": 0, "resolved": 0}
     items = []
     for r in rows:
-        resolved = r["made_by"] == "user" and (parse_ts(r["created_at"]) or now) >= now - timedelta(days=30)
-        tabs = [t for t, outs in TAB_OUTCOMES.items() if r["outcome"] in outs and not (r["made_by"] == "user" and t != "rejected")]
-        if r["made_by"] == "user":
+        # A person has dealt with it: either overrode the decision, or marked it reviewed (accepted the recommendation).
+        human = r["made_by"] == "user" or bool(r.get("confirmed_by"))
+        resolved = human and (parse_ts(r.get("confirmed_at") or r["created_at"]) or now) >= now - timedelta(days=30)
+        tabs = [t for t, outs in TAB_OUTCOMES.items() if r["outcome"] in outs and not (human and t != "rejected")]
+        if human:
             tabs = ["resolved"]
         for t in tabs:
             counts[t] += 1
@@ -385,6 +387,12 @@ def _week_start(d: datetime) -> str:
     return (d - timedelta(days=d.weekday())).date().isoformat()
 
 
+def _is_open(r: dict) -> bool:
+    """An exception is open until a person overrides it or marks it reviewed (same rule as the queue)."""
+    return (r["outcome"] in ("route_for_review", "hold_request_info") and r.get("made_by") != "user"
+            and not r.get("confirmed_by"))
+
+
 def metrics(range_days: int = 30) -> dict:
     now = anchor_now()
     start = now - timedelta(days=range_days)
@@ -393,7 +401,7 @@ def metrics(range_days: int = 30) -> dict:
     baseline_min = cfg["global"].get("baseline", 9)
     with db.conn() as con:
         rows = [dict(r) for r in con.execute(
-            "SELECT i.id, i.total_paise, i.vendor_id, r.started_at, r.duration_ms, r.status, cd.outcome, cd.made_by, "
+            "SELECT i.id, i.total_paise, i.vendor_id, r.started_at, r.duration_ms, r.status, cd.outcome, cd.made_by, cd.confirmed_by, "
             "cd.exposure_paise, cd.category, cd.created_at AS decided_at, "
             "(SELECT outcome FROM decisions s WHERE s.invoice_id=i.id AND s.made_by='system' ORDER BY s.version DESC LIMIT 1) AS sys_outcome, "
             "(SELECT exposure_paise FROM decisions s WHERE s.invoice_id=i.id AND s.made_by='system' ORDER BY s.version DESC LIMIT 1) AS sys_exposure, "
@@ -415,7 +423,7 @@ def metrics(range_days: int = 30) -> dict:
             "processed": n,
             "straight_through_rate": round(100.0 * stp / n, 1) if n else None,
             "median_time_to_decision_ms": int(statistics.median(durs)) if durs else None,
-            "open_exceptions": sum(1 for r in ws if r["outcome"] in ("route_for_review", "hold_request_info")),
+            "open_exceptions": sum(1 for r in ws if _is_open(r)),
             "value_protected_paise": sum(r["sys_exposure"] or 0 for r in protected),
             "value_approved_paise": sum(r["total_paise"] or 0 for r in ws if r["outcome"] in APPROVED_OUTCOMES),
             "_protected": protected,
@@ -430,7 +438,7 @@ def metrics(range_days: int = 30) -> dict:
         contributors[r["sys_category"]]["count"] += 1
         contributors[r["sys_category"]]["value_paise"] += r["sys_exposure"] or 0
     kp.pop("_protected")
-    open_all = [r for r in rows if r["outcome"] in ("route_for_review", "hold_request_info")]
+    open_all = [r for r in rows if _is_open(r)]
     oldest = max([(now - (parse_ts(r["first_decided"]) or now)).days for r in open_all] or [0])
 
     def trend(a, b):

@@ -126,6 +126,15 @@ function Explain({ d }) {
 function FieldsPanel({ d, onEdit }) {
   const fields = Object.entries(d.fields || {}).map(([name, f]) => ({ name, ...f }));
   const low = fields.filter((f) => f.effective_confidence != null && f.effective_confidence < 0.9);
+  const r01 = d.rules.find((r) => r.rule_id === 'R01');
+  const docType = r01 && r01.facts && r01.facts.reason === 'wrong_doc_type' ? r01.facts : null;
+  if (!fields.length && docType) {
+    return (
+      <div className="card panel" data-testid="fields-panel"><h3><Ic n="list" c="sm" />Extracted data</h3>
+        <div className="notice-scan" data-testid="doc-type-notice"><Ic n="pause-circle" c="lg" /><div><b>{`This is a ${docType.doc_label}, not a tax invoice`}</b><p>{r01.message_plain || r01.message}</p></div></div>
+      </div>
+    );
+  }
   if (!fields.length) {
     return (
       <div className="card panel" data-testid="fields-panel"><h3><Ic n="list" c="sm" />Extracted data</h3>

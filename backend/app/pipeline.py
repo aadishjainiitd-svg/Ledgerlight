@@ -23,6 +23,15 @@ log = logging.getLogger("ledgerlight.pipeline")
 CANCEL: dict[str, threading.Event] = {}
 
 
+_VENDOR_LOCKS: dict[str, threading.Lock] = {}
+_VENDOR_LOCKS_GUARD = threading.Lock()
+
+
+def _vendor_lock(key: str) -> threading.Lock:
+    with _VENDOR_LOCKS_GUARD:
+        return _VENDOR_LOCKS.setdefault(key, threading.Lock())
+
+
 class Cancelled(Exception):
     pass
 
@@ -189,11 +198,16 @@ class Runner:
             self.stage(2, self.s2_extract)
             self.stage(3, self.s3_normalise)
             self.stage(4, self.s4_vendor)
-            self.stage(5, self.s5_duplicate)
-            self.stage(6, self.s6_po)
-            self.stage(7, self.s7_validate)
-            self.stage(8, self.s8_decide)
-            self.stage(9, self.s9_explain)
+            # Duplicate check through decision run one at a time per vendor: two copies of one invoice uploaded in
+            # the same batch would otherwise both pass R06, because each only sees invoices that already have a
+            # decision.
+            vendor = (self.ctx.get("vendor_match") or {}).get("vendor") or {}
+            with _vendor_lock(vendor.get("id") or "no-vendor"):
+                self.stage(5, self.s5_duplicate)
+                self.stage(6, self.s6_po)
+                self.stage(7, self.s7_validate)
+                self.stage(8, self.s8_decide)
+                self.stage(9, self.s9_explain)
         except Cancelled:
             return self._finish("cancelled", error="Cancelled by user")
         except StageFailed as e:
@@ -316,6 +330,12 @@ class Runner:
             self.log(2, "info", "No AI key configured: reading the PDF text layer with the deterministic parser"
                                 + (" (OCR layer of a scan)" if info["text_source"] == "ocr_layer" else ""))
             extraction = extract_text.extract(self.data, info["text_source"])
+            hidden = pdfio.hidden_text(self.data) if info["text_source"] == "text_layer" else []
+            if hidden:
+                self.log(2, "warn", f"The PDF contains {len(hidden)} line(s) of invisible text, which a reader cannot "
+                                    f"see. They were ignored: \"{hidden[0][:80]}\"")
+                extraction["document_notes"] = ((extraction.get("document_notes") or "") +
+                                                " The PDF contains invisible text, which was ignored.").strip()
         extraction["_sha"] = self.inv["file_sha256"]
         self.extraction = extraction
         self.ctx["extractor"] = extraction.get("extractor")
@@ -356,7 +376,16 @@ class Runner:
                      + (". Bank change notice found." if extraction.get("bank_change_notice") else ""))
         else:
             self.log(2, "info", "No bank block on the invoice")
-        if info["text_source"] == "text_layer" and info["looks_like_invoice"] is False and \
+        from . import extract_text as _xt  # noqa: PLC0415
+        kind = _xt.classify_document(info.get("text", "")) or _xt.DOC_KIND_ALIASES.get(
+            str(extraction.get("document_type") or "").strip().lower().replace(" ", "_").replace("-", "_"))
+        if kind:
+            self.ctx["extraction_status"] = "wrong_doc_type"
+            self.ctx["doc_kind"] = kind
+            self.ctx["doc_ref"] = extraction["fields"]["invoice_no"].get("value")
+            self.log(2, "warn", f"This document is a {_xt.DOC_KIND_LABEL[kind]}, not a tax invoice. "
+                                f"It will not be processed for payment.")
+        elif info["text_source"] == "text_layer" and info["looks_like_invoice"] is False and \
                 not extraction["fields"]["invoice_no"].get("value") and not extraction["fields"]["total"].get("value"):
             self.ctx["extraction_status"] = "not_invoice"
         nlines = len(extraction.get("line_items") or [])
@@ -468,7 +497,7 @@ class Runner:
                     con.execute("UPDATE invoices SET vendor_id=? WHERE id=?", (v["id"], self.inv["id"]))
             else:
                 self.log(4, "fail", "No vendor in the master matches this invoice")
-            self.ctx["bank"] = matching.bank_compare(c["bank"], c["bank_change_notice"], v)
+            self.ctx["bank"] = matching.bank_compare(c["bank"], c["bank_change_notice"], v, c.get("bank_entries"))
         else:
             self.ctx["bank"] = {"status": "no_vendor"}
         for fn in STAGE_RULES[4]:

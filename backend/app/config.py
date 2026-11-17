@@ -39,7 +39,7 @@ NO_KEY_HINT = "set ANTHROPIC_API_KEY or GROQ_API_KEY"
 # Which invoices the AI reads: "auto" = only image-only scans (text PDFs use the tested deterministic parser),
 # "llm" = every invoice.
 EXTRACTION_MODE = os.environ.get("LEDGERLIGHT_EXTRACTION", "auto").strip().lower()
-PROMPT_VERSION = "extract-1.0"
+PROMPT_VERSION = "extract-1.1"
 TEXT_PARSER_VERSION = "text-parser-1.0"
 
 # Display pacing (minimum visible dwell per stage, ms). Named presets or a number.

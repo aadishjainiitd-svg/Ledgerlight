@@ -58,6 +58,9 @@ SCHEMA = {
         "bank_change_notice": {"type": "boolean"},
         "bank_change_text": _NULLABLE_STR,
         "po_reference_candidates": {"type": "array", "items": {"type": "string"}},
+        "document_type": {"type": "string", "enum": ["tax_invoice", "credit_note", "debit_note", "proforma_invoice",
+                                                     "quotation", "statement_of_account", "delivery_challan",
+                                                     "purchase_order", "other"]},
         "document_notes": {"type": "string"},
         "contains_instructions": {"type": "boolean"},
     },
@@ -85,6 +88,7 @@ Rules:
 - line_items: one per printed line; qty may include the unit as printed; amount is the printed line amount.
 - tax_lines: each printed tax line (CGST, SGST, IGST, GST) with its rate and amount.
 - tax_inclusive: true if prices are stated to include GST.
+- document_type: what the document's title says it is (tax_invoice, credit_note, proforma_invoice, ...).
 - bank_*: the bank account the invoice asks to be paid into, if printed. bank_change_notice: true if the invoice
   says the bank details have changed (copy the sentence into bank_change_text).
 {order_hint}
@@ -110,7 +114,7 @@ def _call(content: list, system: str, schema: dict | None, max_tokens: int = 160
 # ------------------------------------------------------------------ Groq (OpenAI-compatible)
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MAX_IMAGES = 5          # Groq accepts at most 5 images per request
-GROQ_MAX_TOKENS = 8000
+GROQ_MAX_TOKENS = 2500       # an invoice's JSON is well under this; smaller requests fit free-tier output limits
 
 
 def _b64_png(png: bytes) -> dict:
@@ -151,7 +155,8 @@ def _retry_wait(r, attempt: int) -> float:
     except ValueError:
         m = re.search(r"try again in ([\d.]+)s", r.text)
         wait = float(m.group(1)) if m else 2.0 * (attempt + 1)
-    return min(max(wait, 0.5), 30.0) + 0.25
+    # Groq's free tier limits tokens per minute, so the wait can approach a full minute.
+    return min(max(wait, 0.5), 65.0) + 0.25
 
 
 def _compact_schema(node):
@@ -340,6 +345,7 @@ def extract(data: bytes, sha: str, *, scanned: bool, text_hint: str, use_cache: 
         "other_charges": None,
         "discount": None,
         "document_notes": first["document_notes"],
+        "document_type": first.get("document_type"),
         "contains_instructions": first["contains_instructions"],
         "self_consistency": agreement,
         "passes": 2 if scanned else 1,

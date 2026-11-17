@@ -2,6 +2,7 @@
 position of each PO (spec 2.3). Scoring functions are pure; loaders read SQLite."""
 from __future__ import annotations
 
+import re
 import sqlite3
 from collections import Counter
 from datetime import date
@@ -85,17 +86,34 @@ def load_vendors(con: sqlite3.Connection) -> list[dict]:
     return out
 
 
-def bank_compare(inv_bank: dict, notice: bool, vendor: dict | None) -> dict:
-    acct = digits_only(inv_bank.get("account"))
-    ifsc = (inv_bank.get("ifsc") or "").upper()
-    if not acct and not ifsc and not notice:
+def _bank_key(name: str | None) -> str:
+    return re.sub(r"[^a-z]", "", re.sub(r"\b(bank|ltd|limited|co|operative|the)\b", "", (name or "").lower()))
+
+
+def bank_compare(inv_bank: dict, notice: bool, vendor: dict | None, entries: list[dict] | None = None) -> dict:
+    """Compare EVERY bank entry printed on the invoice with the vendor master. Any account or IFSC that differs is a
+    mismatch. A bank that is named but whose account cannot be read, and that is not the bank on file, is
+    'unreadable' (held, never treated as 'no bank details')."""
+    entries = [e for e in (entries or []) if e.get("name") or e.get("account") or e.get("ifsc")] or [inv_bank]
+    accts = [digits_only(e.get("account")) for e in entries if digits_only(e.get("account"))]
+    ifscs = [(e.get("ifsc") or "").upper() for e in entries if e.get("ifsc")]
+    names = [e.get("name") for e in entries if e.get("name")]
+    if not accts and not ifscs and not notice:
+        if names and vendor and any(_bank_key(n) != _bank_key(vendor.get("bank_name")) for n in names):
+            other = next(n for n in names if _bank_key(n) != _bank_key(vendor.get("bank_name")))
+            return {"status": "unreadable", "match": False, "bank_named": other}
         return {"status": "not_applicable", "match": None}
     if not vendor:
         return {"status": "no_vendor", "match": None}
     m_acct = digits_only(vendor.get("bank_account_no"))
     m_ifsc = (vendor.get("bank_ifsc") or "").upper()
-    acct_ok = (not acct) or (acct == m_acct)
-    ifsc_ok = (not ifsc) or (ifsc == m_ifsc)
+    bad = [e for e in entries if (digits_only(e.get("account")) and digits_only(e.get("account")) != m_acct)
+           or (e.get("ifsc") and e["ifsc"].upper() != m_ifsc)]
+    if bad:
+        return {"status": "mismatch", "match": False, "account_matches": False, "ifsc_matches": False,
+                "offending": bad[0], "entries_seen": len(entries)}
+    acct = accts[0] if accts else ""
+    acct_ok, ifsc_ok = True, True
     if acct_ok and ifsc_ok and not notice:
         return {"status": "match", "match": True}
     if acct_ok and ifsc_ok and acct and vendor.get("bank_verified_by") and vendor.get("bank_changed_at"):
@@ -111,6 +129,16 @@ def bank_compare(inv_bank: dict, notice: bool, vendor: dict | None) -> dict:
 def fingerprint(lines: list[dict]) -> Counter:
     return Counter((l.get("desc_norm") or norm_desc(l.get("description")), round(float(l.get("qty") or 0), 3),
                     int(l.get("pretax_unit_paise") or l.get("unit_price_paise") or 0)) for l in lines)
+
+
+RECURRING_RE = re.compile(r"\b(rent|rental|lease|retainer|subscription|licen[cs]e|amc|maintenance|monthly|per month|"
+                          r"service charges?|fees? for|hosting|support plan)\b", re.I)
+
+
+def _looks_recurring(lines: list[dict]) -> bool:
+    """Every line reads like a recurring service, so an identical bill a month later is expected."""
+    descs = [l.get("description") or "" for l in lines]
+    return bool(descs) and all(RECURRING_RE.search(d) for d in descs)
 
 
 def duplicate_score(cur: dict, prior: dict, weights: dict) -> dict:
@@ -147,9 +175,11 @@ def duplicate_score(cur: dict, prior: dict, weights: dict) -> dict:
     else:
         sig["lines"] = 0.0
     guard = False
-    # Recurring-charge guard: different serials roughly a billing cycle apart are not penalised
-    # toward duplicate on number and date.
-    if sa and sb and sa != sb and da and dbb and abs((da - dbb).days) >= 25:
+    # Recurring-charge guard: different serials roughly a billing cycle apart are not penalised toward duplicate on
+    # number and date. It does not apply when the same goods come back line for line (a re-bill of one delivery),
+    # only when the lines differ or are a recurring service such as rent or a monthly retainer.
+    same_goods = sig["lines"] >= 0.9 and not _looks_recurring(cur.get("lines") or [])
+    if sa and sb and sa != sb and da and dbb and abs((da - dbb).days) >= 25 and not same_goods:
         guard = True
         sig["number"] = 0.0
         sig["date"] = 0.0
@@ -240,6 +270,7 @@ def po_position(con, po_id: str, exclude_invoice_id: str | None = None) -> dict 
         l["billed_value_paise"] = int(round(l["billed_qty"] * l["unit_price_paise"]))
         l["pending_qty"] = 0.0
         l["pending_value_paise"] = 0
+        l["pending_from"] = []        # invoice numbers waiting in review/hold that claim this line
     history = []
     q = ("SELECT i.id, i.invoice_no_raw, i.invoice_date, i.total_paise, i.subtotal_paise, i.paid_at, i.is_synthetic, "
          "i.current_run_id, d.outcome, d.made_by FROM invoices i LEFT JOIN decisions d ON d.id = i.current_decision_id "
@@ -264,6 +295,8 @@ def po_position(con, po_id: str, exclude_invoice_id: str | None = None) -> dict 
                     continue
                 pl[f"{bucket}_qty"] += float(a.get("qty") or 0)
                 pl[f"{bucket}_value_paise"] += int(a.get("amount_paise") or 0)
+                if bucket == "pending" and inv["invoice_no_raw"] and inv["invoice_no_raw"] not in pl["pending_from"]:
+                    pl["pending_from"].append(inv["invoice_no_raw"])
     subtotal = sum(int(round(l["ordered_qty"] * l["unit_price_paise"])) for l in lines)
     tax = sum(int(round(l["ordered_qty"] * l["unit_price_paise"] * (l["tax_rate_pct"] or 0) / 100)) for l in lines)
     billed = sum(l["billed_value_paise"] for l in lines)

@@ -1,0 +1,52 @@
+{
+ "B02": {
+  "id": "B02",
+  "title": "Legit two-page invoice (table continues on page 2)",
+  "attack": "4 chairs on page 1, 3 desks + totals on page 2",
+  "group": "legit blocked",
+  "expect": [
+   "auto_approve"
+  ],
+  "severity_if_wrong": "high",
+  "verdict": "OK",
+  "actual": "APPROVE [-]",
+  "seconds": 4.5,
+  "results": [
+   {
+    "file": "B02_two_pages.pdf",
+    "status": "completed",
+    "error": null,
+    "outcome": "auto_approve",
+    "driving": [],
+    "headline": "Approved: everything checks out and it is safe to pay.",
+    "exposure_paise": 0,
+    "assigned_to": null,
+    "flagged": {},
+    "invoice_no": "BLS/26-27/0702",
+    "total_paise": 7316000,
+    "vendor_id": "V-101",
+    "po_id": "PO-2026-1001",
+    "po_method": "explicit",
+    "r05": "Bank account ending 8901 on the invoice matches the account on file.",
+    "r10": "Unit prices match the PO on all 2 lines.",
+    "ok": [
+     "Vendor approved (matched by GSTIN 27AAFCB4821K1Z3)",
+     "PO-2026-1001 found on the invoice",
+     "Prices match the PO",
+     "Quantities are within what is left on the order",
+     "Every line is on the PO",
+     "GST at 18% is calculated correctly",
+     "Total adds up",
+     "Bank account matches the one on file",
+     "Not a duplicate",
+     "Invoice date is valid"
+    ],
+    "attention": [],
+    "explanation_mode": null
+   }
+  ],
+  "files": [
+   "B02_two_pages.pdf"
+  ]
+ }
+}

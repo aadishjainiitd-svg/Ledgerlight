@@ -23,7 +23,7 @@ function QuickPanel({ item, onClose, onChanged }) {
   const draft = d && (d.drafts || []).find((x) => x.kind !== 'checklist');
   async function accept() {
     setBusy(true);
-    try { await api(`/api/invoices/${item.invoice_id}/accept`, { method: 'POST', body: { note: 'Accepted the recommendation from the review queue' } }); toast(`${item.invoice_no} confirmed by you. Recorded in the audit log.`); onChanged(); onClose(); }
+    try { await api(`/api/invoices/${item.invoice_id}/accept`, { method: 'POST', body: { note: 'Marked reviewed from the review queue' } }); toast(`${item.invoice_no} marked reviewed and moved to Resolved. To change what is paid, use Override.`); onChanged(); onClose(); }
     catch (e) { toast(e.message); } finally { setBusy(false); }
   }
   async function asked() { try { const r = await api(`/api/invoices/${item.invoice_id}/info-requested`, { method: 'POST', body: {} }); toast('Info requested. The wait for the vendor has started.'); onChanged(); return r; } catch (e) { toast(e.message); } return null; }
@@ -49,7 +49,7 @@ function QuickPanel({ item, onClose, onChanged }) {
           </div></div>
       ) : null}
       <div className="row wrap gap-s">
-        {k !== 'reject' ? <button className="btn primary" onClick={accept} disabled={busy} data-testid="q-accept"><Ic n="check" c="sm" />Accept recommendation</button> : null}
+        {k !== 'reject' ? <button className="btn primary" onClick={accept} disabled={busy} data-testid="q-accept"><Ic n="check" c="sm" />Mark reviewed (agree)</button> : null}
         <Link className="btn" href={`/decision/${item.run_id}?override=1`}>Override…</Link>
         <Link className="btn" href={`/decision/${item.run_id}`} data-testid="q-open">Open full detail</Link>
       </div>

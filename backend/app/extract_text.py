@@ -252,6 +252,9 @@ def _header_candidates(rows: list[Row]):
                     yield hi + 1, cols, row.text + " " + nxt.text
 
 
+CONTINUED_RE = re.compile(r"\b(continued|contd\.?|carried\s+forward|c/f)\b", re.I)
+
+
 def parse_table(rows: list[Row], low_conf: bool) -> tuple[list[dict], bool, int | None]:
     """Returns (line_items, header_says_tax_inclusive, header_row_index)."""
     for hi, cols, head_text in _header_candidates(rows):
@@ -259,12 +262,28 @@ def parse_table(rows: list[Row], low_conf: bool) -> tuple[list[dict], bool, int 
         incl = bool(re.search(r"incl", head_text, re.I))
         items: list[dict] = []
         conf = 0.88 if low_conf else 0.95
+        page, skipping, skipped = row.page, False, 0
         for r in rows[hi + 1:]:
-            if r.page != row.page:
-                break
+            if r.page != page:
+                # The table may continue on the next page: skip that page's letterhead, "continued" line and
+                # repeated column header until the next item row (a table that does not continue ends here).
+                if not items:
+                    break
+                page, skipping, skipped = r.page, True, 0
+            if skipping:
+                if _row_is_item(r, cols):
+                    skipping = False
+                else:
+                    skipped += 1
+                    if TABLE_END.search(r.text) and not _is_header_row(r, cols) or skipped > 12:
+                        break
+                    continue
+            if items and CONTINUED_RE.search(r.text) and not _row_is_item(r, cols):
+                skipping, skipped = True, 0      # "Continued on page 2": the table goes on after the page break
+                continue
             if TABLE_END.search(r.text) and not _row_is_item(r, cols):
                 break
-            if items and r.y - items[-1]["_y"] > 140:
+            if items and items[-1]["_page"] == r.page and r.y - items[-1]["_y"] > 140:
                 break
             cellmap = _assign(r.cells, cols)
             amount = cellmap.get("amount")
@@ -286,15 +305,22 @@ def parse_table(rows: list[Row], low_conf: bool) -> tuple[list[dict], bool, int 
                     "confidence": conf,
                     "raw_text": r.text,
                     "_y": r.y,
+                    "_page": r.page,
                 })
             elif items and cellmap.get("desc") and not amount:
                 items[-1]["description"] = (items[-1]["description"] + " " + cellmap["desc"]).strip()
                 items[-1]["_y"] = r.y
         for it in items:
             it.pop("_y", None)
+            it.pop("_page", None)
         if items:
             return items, incl, hi
     return [], False, None
+
+
+def _is_header_row(r: Row, cols) -> bool:
+    """A repeated column header (on a continuation page)."""
+    return bool(classify_header(r.cells))
 
 
 def _row_is_item(r: Row, cols) -> bool:
@@ -389,7 +415,7 @@ def parse_totals(rows: list[Row], start: int) -> dict:
 
 # ------------------------------------------------------------------ bank
 BANK_NAME_RE = re.compile(r"([A-Z][A-Za-z&.\-]*(?:\s+[A-Z][A-Za-z&.\-]*){0,4}\s+Bank)\b")
-ACCT_RE = re.compile(r"(?:a/c|account)\s*(?:no\.?|number|#)?\s*[:.\-]?\s*(\d[\d ]{6,24}\d)", re.I)
+ACCT_RE = re.compile(r"(?:a/c|account)\s*(?:no\.?|number|#)?\s*[:.\-]?\s*(\d[\d \-.]{6,28}\d)", re.I)
 CHANGE_RE = re.compile(r"bank (?:account )?details (?:have|has) (?:been )?changed|new bank (?:account|details)|"
                        r"change (?:of|in) (?:our )?bank|bank details changed|updated bank details", re.I)
 
@@ -403,14 +429,20 @@ def parse_bank(lines: list[str]) -> dict:
     bank_lines = [ln for ln in lines if re.search(r"\b(a/c|account|ifsc)\b", ln, re.I) and re.search(r"bank", ln, re.I)]
     # Prefer the payment block over the change-notice sentence when both exist.
     bank_lines.sort(key=lambda ln: 1 if CHANGE_RE.search(ln) else 0)
+    # Every bank entry on the page is kept: an invoice can name a second "remit to" account further down, and
+    # comparing only the first one would miss it (R05 checks them all).
+    res["entries"] = []
     for ln in bank_lines:
         m = BANK_NAME_RE.search(ln)
         a = ACCT_RE.search(ln)
         i = IFSC_RE.search(ln)
         if m or a:
-            res["bank_name"] = res["bank_name"] or (m.group(1).strip() if m else None)
-            res["account"] = res["account"] or (a.group(1).strip() if a else None)
-            res["ifsc"] = res["ifsc"] or (i.group(0) if i else None)
+            entry = {"name": m.group(1).strip() if m else None, "account": a.group(1).strip() if a else None,
+                     "ifsc": i.group(0) if i else None, "raw": ln.strip()}
+            res["entries"].append(entry)
+            res["bank_name"] = res["bank_name"] or entry["name"]
+            res["account"] = res["account"] or entry["account"]
+            res["ifsc"] = res["ifsc"] or entry["ifsc"]
             res["raw"] = res["raw"] or ln.strip()
     if res["ifsc"] is None:
         for ln in lines:
@@ -423,6 +455,43 @@ def parse_bank(lines: list[str]) -> dict:
 
 # ------------------------------------------------------------------ main entry
 TITLE_WORDS = re.compile(r"^(tax\s+invoice|invoice|bill|original|duplicate|copy|cash memo)\b", re.I)
+
+# Documents that look like invoices but must never be paid as one. Matched only against whole title lines near the
+# top of the first page, so phrases such as "Against Invoice No" or "Credit Note No:" in the body do not count.
+DOC_KINDS = [
+    ("credit_note", re.compile(r"^(gst\s+)?credit\s*note\b", re.I)),
+    ("debit_note", re.compile(r"^(gst\s+)?debit\s*note\b", re.I)),
+    ("proforma", re.compile(r"^pro[\s\-]?forma(\s+invoice)?\b", re.I)),
+    ("quotation", re.compile(r"^(quotation|estimate|price\s+quote)\b", re.I)),
+    ("statement", re.compile(r"^statement(\s+of\s+accounts?)?\b", re.I)),
+    ("delivery_challan", re.compile(r"^delivery\s+(challan|note)\b", re.I)),
+]
+INVOICE_TITLE = re.compile(r"^(tax\s+invoice|invoice|bill\s+of\s+supply|retail\s+invoice)\b(?!\s*(no|number|#|date))",
+                           re.I)
+
+
+DOC_KIND_LABEL = {"credit_note": "credit note", "debit_note": "debit note", "proforma": "proforma invoice",
+                  "quotation": "quotation", "statement": "statement of account",
+                  "delivery_challan": "delivery challan", "purchase_order": "purchase order"}
+# What a vision model may answer for document_type (anything else, including "tax_invoice", means an invoice).
+DOC_KIND_ALIASES = {"credit_note": "credit_note", "debit_note": "debit_note", "proforma": "proforma",
+                    "proforma_invoice": "proforma", "pro_forma_invoice": "proforma", "quotation": "quotation",
+                    "estimate": "quotation", "statement": "statement", "statement_of_account": "statement",
+                    "delivery_challan": "delivery_challan", "purchase_order": "purchase_order"}
+
+
+def classify_document(text: str, top_lines: int = 12) -> str | None:
+    """'credit_note', 'proforma', ... when a title line near the top names a non-invoice document, else None."""
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()][:top_lines]
+    for ln in lines:
+        if len(ln) > 40:          # a title is short; long lines are addresses or sentences
+            continue
+        if INVOICE_TITLE.match(ln):
+            return None           # the first title wins: an invoice title means it is an invoice
+        for kind, rx in DOC_KINDS:
+            if rx.match(ln):
+                return kind
+    return None
 
 
 def _fld(value, raw=None, conf=0.0, **extra):
@@ -527,6 +596,7 @@ def extract(data: bytes, text_source: str = "text_layer") -> dict:
         "tax_rate_pct": rate,
         "bank_change_notice": bank["notice"],
         "bank_change_text": bank["notice_text"],
+        "bank_entries": bank["entries"],
         "po_reference_candidates": po_cands,
         "other_charges": None,
         "discount": None,

@@ -79,11 +79,49 @@ def inspect(data: bytes) -> dict:
         doc.close()
 
 
+def _hidden_boxes(page) -> list[tuple]:
+    """Bounding boxes of text a reader cannot see (render mode 3 or fully transparent) on a page that also has
+    visible text. A page whose text is ALL invisible is an OCR layer over a scanned image and is kept."""
+    try:
+        trace = page.get_texttrace()
+    except Exception:
+        return []
+    hidden = [s for s in trace if s.get("type") == 3 or (s.get("opacity") is not None and s["opacity"] <= 0.01)]
+    if not hidden or len(hidden) == len(trace):
+        return []
+    return [tuple(s["bbox"]) for s in hidden]
+
+
+def _inside(w: tuple, boxes: list[tuple]) -> bool:
+    cx, cy = (w[0] + w[2]) / 2, (w[1] + w[3]) / 2
+    return any(b[0] - 1 <= cx <= b[2] + 1 and b[1] - 1 <= cy <= b[3] + 1 for b in boxes)
+
+
 def words(data: bytes) -> list[list[tuple]]:
-    """Per page list of (x0, y0, x1, y1, word)."""
+    """Per page list of (x0, y0, x1, y1, word), without text a reader cannot see (see _hidden_boxes)."""
     doc = pymupdf.open(stream=data, filetype="pdf")
     try:
-        return [[(w[0], w[1], w[2], w[3], w[4]) for w in page.get_text("words")] for page in doc]
+        out = []
+        for page in doc:
+            boxes = _hidden_boxes(page)
+            out.append([(w[0], w[1], w[2], w[3], w[4]) for w in page.get_text("words") if not _inside(w, boxes)])
+        return out
+    finally:
+        doc.close()
+
+
+def hidden_text(data: bytes) -> list[str]:
+    """The invisible lines dropped by words(), for the run log (first 120 characters of each)."""
+    doc = pymupdf.open(stream=data, filetype="pdf")
+    try:
+        found = []
+        for page in doc:
+            boxes = _hidden_boxes(page)
+            for b in boxes:
+                t = page.get_textbox(pymupdf.Rect(b)).strip()
+                if t:
+                    found.append(re.sub(r"\s+", " ", t)[:120])
+        return found
     finally:
         doc.close()
 

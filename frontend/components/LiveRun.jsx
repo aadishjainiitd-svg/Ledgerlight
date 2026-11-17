@@ -258,7 +258,7 @@ export default function LiveRun({ runId }) {
             </button>
             <div className="grow">
               <div className="row wrap gap-s"><h3 style={{ fontSize: 15 }}>Extracted fields</h3>{scanned ? <span className="pill accent">Scanned image</span> : doc ? <span className="pill">Text PDF</span> : null}</div>
-              <p className="small sec" style={{ marginTop: 3 }}>{scanned ? 'We read this by looking at the image, so some values carry less confidence.' : 'Read from the text layer of the PDF and confirmed against the page image.'} Fields appear as each stage finishes.</p>
+              <p className="small sec" style={{ marginTop: 3 }}>{scanned ? 'We read this by looking at the image, so some values carry less confidence.' : 'Read from the text layer of the PDF. Confidence reflects whether each value is in the expected format and agrees with the rest of the invoice.'} Fields appear as each stage finishes.</p>
             </div>
           </div>
 
