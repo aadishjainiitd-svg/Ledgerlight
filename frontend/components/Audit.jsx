@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Fragment, useEffect, useState } from 'react';
-import { API, qs } from '@/lib/api';
+import { API, url, qs } from '@/lib/api';
 import { addDays, downloadText, fmtDT, initials } from '@/lib/format';
 import { Chip, Empty, ErrorBanner, Ic, OUT_COLOR, PageHead, Shimmer, outKey, useApi, useApp } from '@/lib/ui';
 
@@ -64,7 +64,7 @@ export default function Audit() {
 
   async function exportAs(fmt) {
     try {
-      const t = await (await fetch(`${API}/api/audit/export${qs({ ...filt, format: fmt })}`)).text();
+      const t = await (await fetch(url(`/api/audit/export${qs({ ...filt, format: fmt })}`))).text();
       downloadText(`audit-log.${fmt}`, t, fmt === 'csv' ? 'text/csv' : 'application/json');
       toast(`Audit log exported as ${fmt.toUpperCase()}. The export itself is recorded below.`); setTimeout(reload, 400);
     } catch { toast("Couldn't export. The server is not reachable."); }

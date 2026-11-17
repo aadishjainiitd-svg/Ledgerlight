@@ -1,10 +1,14 @@
 """SQLite storage (WAL mode). Money is integer paise; timestamps are UTC ISO-8601."""
 from __future__ import annotations
 
+import contextvars
 import json
+import os
+import re
 import secrets
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -121,12 +125,120 @@ def loads(v, default=None):
         return default
 
 
+# ------------------------------------------------------------------ per-visitor sandboxes
+# With LEDGERLIGHT_SANDBOXES=1 (the public deployment) every visitor gets a private copy of the demo database,
+# cloned from a template that is seeded once at startup. The visitor's sandbox id travels with each request
+# (header or ?sandbox=) and is held in a context variable, which background runs inherit, so every query of a
+# request or run goes to that visitor's file. Without the setting there is one database, as before.
+_SANDBOX: contextvars.ContextVar[str | None] = contextvars.ContextVar("ledgerlight_sandbox", default=None)
+SANDBOX_RE = re.compile(r"^[a-f0-9]{16,40}$")
+TEMPLATE = "template"
+SANDBOX_MAX_AGE_S = 24 * 3600
+SANDBOX_MAX_COUNT = 300
+
+
+def sandboxes_enabled() -> bool:
+    return config.SANDBOXES
+
+
+def current_sandbox() -> str | None:
+    return _SANDBOX.get()
+
+
+@contextmanager
+def use_sandbox(sb: str | None):
+    token = _SANDBOX.set(sb)
+    try:
+        yield
+    finally:
+        _SANDBOX.reset(token)
+
+
+def sandbox_dir() -> Path:
+    return Path(config.DATA_DIR) / "sandboxes"
+
+
+def template_path() -> Path:
+    return Path(config.DATA_DIR) / "template.db"
+
+
+def shared_path() -> Path:
+    """Where data shared by all visitors lives (the AI extraction cache): the main database without sandboxes."""
+    return Path(config.DATA_DIR) / "shared.db" if sandboxes_enabled() else Path(config.DB_PATH)
+
+
 def db_path() -> Path:
+    sb = _SANDBOX.get()
+    if sb == TEMPLATE:
+        return template_path()
+    if sb:
+        return sandbox_dir() / f"{sb}.db"
     return Path(config.DB_PATH)
 
 
-def connect() -> sqlite3.Connection:
-    p = db_path()
+def _copy_db(src: Path, dst: Path) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    s = sqlite3.connect(str(src))
+    d = sqlite3.connect(str(dst), timeout=30)
+    try:
+        s.backup(d)
+    finally:
+        s.close()
+        d.close()
+
+
+def ensure_sandbox(sb: str, fresh: bool = False) -> bool:
+    """Create the sandbox from the template if it does not exist (or always, with fresh=True, which is a reset).
+    Returns True when a copy was made."""
+    p = sandbox_dir() / f"{sb}.db"
+    if p.exists() and not fresh:
+        try:
+            os.utime(p, None)          # last-used time, for clean-up
+        except OSError:
+            pass
+        return False
+    with _lock:
+        if p.exists() and not fresh:
+            return False
+        if not template_path().exists():
+            raise RuntimeError("The demo template database has not been built yet.")
+        _copy_db(template_path(), p)
+        _initialised.discard(str(p))
+    _clean_sandboxes(keep=p)
+    return True
+
+
+def _clean_sandboxes(keep: Path) -> None:
+    """Delete sandboxes unused for a day, and the oldest beyond the cap."""
+    try:
+        files = sorted(sandbox_dir().glob("*.db"), key=lambda f: f.stat().st_mtime)
+    except OSError:
+        return
+    now = time.time()
+    doomed = [f for f in files if f != keep and now - f.stat().st_mtime > SANDBOX_MAX_AGE_S]
+    rest = [f for f in files if f not in doomed]
+    doomed += [f for f in rest[:max(0, len(rest) - SANDBOX_MAX_COUNT)] if f != keep]
+    for f in doomed:
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                Path(str(f) + suffix).unlink(missing_ok=True)
+            except OSError:
+                pass
+        _initialised.discard(str(f))
+
+
+@contextmanager
+def shared_conn():
+    """Connection to the shared database (AI extraction cache), whatever sandbox is active."""
+    con = connect(shared_path())
+    try:
+        yield con
+    finally:
+        con.close()
+
+
+def connect(path: Path | None = None) -> sqlite3.Connection:
+    p = Path(path) if path is not None else db_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(str(p), timeout=30, isolation_level=None, check_same_thread=False)
     con.row_factory = sqlite3.Row

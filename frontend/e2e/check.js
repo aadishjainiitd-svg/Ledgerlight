@@ -283,7 +283,9 @@ process.on('SIGINT', () => { stopStarted(); process.exit(130); });
     const chips = new Set(); const t1 = Date.now(); let st2 = '';
     while (Date.now() - t1 < 60000) { st2 = await p2.getAttribute('[data-testid="live-run"]', 'data-run-state').catch(() => ''); chips.add(await p2.getAttribute('[data-testid="conn-chip"]', 'data-state').catch(() => null)); if (st2 === 'completed') break; await p2.waitForTimeout(100); }
     const uiLogs = parseInt(await p2.textContent('[data-testid="log-count"]'), 10);
-    const stored = ((await (await fetch(`${API}/api/runs/${rid}/events`)).text()).match(/event: log/g) || []).length;
+    // read the stored stream from the same sandbox as the browser (a backend without sandboxes ignores the id)
+    const sb = await p2.evaluate(() => { try { return localStorage.getItem('ll-sandbox') || ''; } catch { return ''; } });
+    const stored = ((await (await fetch(`${API}/api/runs/${rid}/events${sb ? `?sandbox=${sb}` : ''}`)).text()).match(/event: log/g) || []).length;
     const urls = await p2.evaluate(() => window.__urls);
     record('g', 'stream drop -> reconnecting -> resumes with last_event_id, no lost events', st2 === 'completed' && chips.has('reconnecting') && uiLogs === stored && urls.some((u) => /last_event_id=\d+/.test(u)), `states=${[...chips].join('>')}, UI log events ${uiLogs} = stored ${stored}`);
     await p2.close();

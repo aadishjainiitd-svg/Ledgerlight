@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { API, ApiError, api, getApiRole } from '@/lib/api';
+import { API, url, ApiError, api, getApiRole } from '@/lib/api';
 import { Chip, Empty, ErrorBanner, Ic, PageHead, Shimmer, useApi, useApp } from '@/lib/ui';
 
 const MB = 1048576;
@@ -15,7 +15,7 @@ function uploadFiles(files, pace, useCache, onProgress) {
     files.forEach((f) => fd.append('files', f));
     fd.append('pace', pace); fd.append('use_cache', useCache ? 'true' : 'false');
     const x = new XMLHttpRequest();
-    x.open('POST', API + '/api/runs');
+    x.open('POST', url('/api/runs'));
     x.setRequestHeader('X-Ledgerlight-Role', getApiRole());
     x.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100)); };
     x.onload = () => {
@@ -141,7 +141,7 @@ export default function NewRun() {
             const scanned = s.tags.some((t) => /scan/i.test(t));
             return (
               <div className="card sample" key={s.id} id={`sample-${s.id}`} data-testid={`sample-${s.id}`} style={focus === s.id ? { boxShadow: '0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent)' } : undefined}>
-                <div className="thumb"><img src={`${API}${s.thumbnail_url}?dpi=40`} alt={`Thumbnail of ${s.file}`} style={{ height: 118, width: 'auto', maxWidth: '100%' }} loading="lazy" /></div>
+                <div className="thumb"><img src={url(`${s.thumbnail_url}?dpi=40`)} alt={`Thumbnail of ${s.file}`} style={{ height: 118, width: 'auto', maxWidth: '100%' }} loading="lazy" /></div>
                 <div className="row gap-s wrap"><span className="tag">{s.id}</span><span className="tag">{s.vendor.split(' ')[0]}</span>{scanned ? <span className="pill accent">Scanned</span> : <span className="pill">Text PDF</span>}{s.run_before ? <span className="pill" data-tip="This sample has been run before">Run before</span> : null}</div>
                 <div><h4>{s.invoice_no}</h4><p className="small sec" style={{ marginTop: 2 }}>{s.description}</p></div>
                 {s.requires_llm && !s.runnable_now ? <div className="small" style={{ color: 'var(--hold-fg)', background: 'var(--hold-bg)', borderRadius: 8, padding: '6px 9px' }}>{s.note || 'Needs AI extraction. It will be put on hold with a clear reason.'}</div> : null}

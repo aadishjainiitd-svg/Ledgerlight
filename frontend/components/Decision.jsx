@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
-import { API, api } from '@/lib/api';
+import { API, url, api } from '@/lib/api';
 import { clamp, fmtD, fmtDT, fmtDay, fmtT, inr, inrP, inrP2, num, secs } from '@/lib/format';
 import { Chip, ConfChip, Empty, ErrorBanner, Ic, Modal, OUT, OUT_COLOR, SEVRANK, SevChip, SevIcon, Shimmer, Sheet, copyText, outKey, useApi, useApp } from '@/lib/ui';
 
@@ -375,7 +375,7 @@ export default function Decision({ runId }) {
     try { const r = await api(`/api/invoices/${inv.id}/rerun`, { method: 'POST', body: { reason: 'Re-run from the decision page', pace: settings.speed, use_cache: settings.cache } }); router.push(`/runs/${r.run_id}`); } catch (e) { toast(e.message); }
   }
   async function copyJson() {
-    try { const t = await (await fetch(`${API}/api/runs/${runId}/decision.json`)).text(); await copyText(t); toast('Decision JSON copied to the clipboard'); } catch { toast("Couldn't fetch the decision JSON."); }
+    try { const t = await (await fetch(url(`/api/runs/${runId}/decision.json`))).text(); await copyText(t); toast('Decision JSON copied to the clipboard'); } catch { toast("Couldn't fetch the decision JSON."); }
   }
 
   return (
@@ -426,10 +426,10 @@ export default function Decision({ runId }) {
               {d.has_pdf ? <>
                 <button className="icon-btn" onClick={() => setZoom((z) => clamp(+(z - 0.1).toFixed(1), 0.6, 1.5))} aria-label="Zoom out" style={{ width: 28, height: 28 }}>−</button><span className="small num">{Math.round(zoom * 100)}%</span><button className="icon-btn" onClick={() => setZoom((z) => clamp(+(z + 0.1).toFixed(1), 0.6, 1.5))} aria-label="Zoom in" style={{ width: 28, height: 28 }}>+</button>
                 {nPages > 1 ? <><button className="icon-btn" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} aria-label="Previous page" style={{ width: 28, height: 28 }}><Ic n="chev-l" c="sm" /></button><span className="small muted">Page {page} of {nPages}</span><button className="icon-btn" disabled={page >= nPages} onClick={() => setPage((p) => p + 1)} aria-label="Next page" style={{ width: 28, height: 28 }}><Ic n="chev-r" c="sm" /></button></> : <span className="small muted">Page 1 of 1</span>}
-                <a className="btn sm" href={`${API}${d.pdf_url}`} target="_blank" rel="noreferrer" data-testid="open-pdf"><Ic n="download" c="sm" />PDF</a></> : null}
+                <a className="btn sm" href={url(`${d.pdf_url}`)} target="_blank" rel="noreferrer" data-testid="open-pdf"><Ic n="download" c="sm" />PDF</a></> : null}
             </div>
             <div className="paper-wrap">
-              {d.has_pdf ? <div style={{ width: `${zoom * 100}%`, maxWidth: 640 * zoom }}>{!imgOk ? <Shimmer h={460} /> : null}<img className="pdf-img" data-testid="pdf-page" style={imgOk ? undefined : { display: 'none' }} onLoad={() => setImgOk(true)} src={`${API}/api/invoices/${inv.id}/pages/${page}.png?dpi=110`} alt={`Page ${page} of ${inv.file_name}, the original invoice`} /></div>
+              {d.has_pdf ? <div style={{ width: `${zoom * 100}%`, maxWidth: 640 * zoom }}>{!imgOk ? <Shimmer h={460} /> : null}<img className="pdf-img" data-testid="pdf-page" style={imgOk ? undefined : { display: 'none' }} onLoad={() => setImgOk(true)} src={url(`/api/invoices/${inv.id}/pages/${page}.png?dpi=110`)} alt={`Page ${page} of ${inv.file_name}, the original invoice`} /></div>
                 : <div className="nopdf"><Ic n="file" c="lg" /><b>PDF not stored for demo history</b><span className="small">{d.pdf_note || 'This run came from the seeded history, so only the extracted data and decision are kept. Uploaded invoices keep their PDF.'}</span></div>}
             </div>
           </div>
@@ -443,7 +443,7 @@ export default function Decision({ runId }) {
           <div className="card panel" data-testid="activity"><h3><Ic n="clock" c="sm" />Activity<Link className="right small" href={`/audit?invoice=${inv.id}`} data-testid="audit-link">Open this invoice in the audit log</Link></h3>
             <div className="tl">{(d.timeline || []).map((e, i, a) => <div className={`ev ${i === a.length - 1 ? 'now' : ''}`} key={e.id} style={{ '--evc': e.outcome && OUT_COLOR[outKey(e.outcome)] ? OUT_COLOR[outKey(e.outcome)] : 'var(--line-2)' }}><div className="small muted">{fmtDT(e.ts)} · {e.actor_id}</div><div>{e.summary}</div></div>)}</div></div>
           <details className="drawer"><summary><Ic n="cpu" c="sm" />Technical details<span className="muted small" style={{ fontWeight: 500 }}>Extraction and decision JSON</span></summary>
-            <div className="row" style={{ padding: '0 18px 12px' }}><a className="btn sm" href={`${API}/api/runs/${runId}/decision.json`} target="_blank" rel="noreferrer"><Ic n="download" c="sm" />Download decision JSON</a></div>
+            <div className="row" style={{ padding: '0 18px 12px' }}><a className="btn sm" href={url(`/api/runs/${runId}/decision.json`)} target="_blank" rel="noreferrer"><Ic n="download" c="sm" />Download decision JSON</a></div>
             <pre className="json">{JSON.stringify({ decision: { id: dec.id, version: dec.version, outcome: dec.outcome, driving_rule_ids: dec.driving_rule_ids, exposure_paise: dec.exposure_paise, made_by: dec.made_by }, technical: d.technical, run: d.run }, null, 2)}</pre></details>
         </div>
       </div>

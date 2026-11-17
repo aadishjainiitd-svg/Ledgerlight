@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { API, ROLES, api, setApiRole } from '@/lib/api';
+import { API, url, ROLES, api, setApiRole } from '@/lib/api';
 import { AppCtx, Ic, TipLayer, useApi, useToasts } from '@/lib/ui';
 
 const NAV = [
@@ -74,7 +74,7 @@ export default function Shell({ children }) {
       clearTimeout(debounce); debounce = setTimeout(() => setTick((n) => n + 1), 250);
     };
     const open = () => {
-      es = new EventSource(API + '/api/stream/runs');
+      es = new EventSource(url('/api/stream/runs'));
       es.onopen = () => setConnected(true);
       es.onerror = () => { setConnected(false); if (es.readyState === 2 && !stopped) { timer = setTimeout(open, 2500); } };
       ['run_created', 'run_stage', 'run_completed', 'run_failed', 'run_cancelled', 'decision_overridden', 'demo_reset'].forEach((t) => {

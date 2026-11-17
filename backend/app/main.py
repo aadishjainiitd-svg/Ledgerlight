@@ -32,7 +32,11 @@ _tasks: set = set()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.connect().close()
-    if os.environ.get("LEDGERLIGHT_AUTOSEED", "1") != "0":
+    if db.sandboxes_enabled():
+        # every visitor's sandbox is a copy of this template, rebuilt on each start so it matches the code
+        res = await asyncio.to_thread(seed.build_template)
+        log.info("Sandbox template ready: %s runs, %s open exceptions", res["runs"], res["open_exceptions"])
+    elif os.environ.get("LEDGERLIGHT_AUTOSEED", "1") != "0":
         await asyncio.to_thread(seed.ensure_seeded)
     # runs interrupted by a server restart cannot resume: mark them failed so the UI offers Retry
     with db.tx() as con:
@@ -48,8 +52,47 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Ledgerlight API", version="1.0.0", lifespan=lifespan,
               description="AI invoice processing. The AI reads, rules decide, everyone can see why.")
+class SandboxMiddleware:
+    """Puts each API request (and everything it starts, such as background runs) into the visitor's sandbox.
+
+    The id comes from the X-Ledgerlight-Sandbox header, or ?sandbox= for URLs a browser loads by itself (the live
+    run stream, page images, PDF links). The frontend makes the id once and keeps it; a request without one gets a
+    new sandbox, and the id is returned in the same header. A pure ASGI middleware, so the context variable is
+    visible to streaming responses too."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if not db.sandboxes_enabled() or scope["type"] != "http" or scope.get("method") == "OPTIONS" \
+                or not scope.get("path", "").startswith("/api"):
+            await self.app(scope, receive, send)
+            return
+        sb = None
+        for k, v in scope.get("headers") or []:
+            if k == b"x-ledgerlight-sandbox":
+                sb = v.decode("latin-1").strip().lower()
+        if not sb:
+            from urllib.parse import parse_qs  # noqa: PLC0415
+            sb = (parse_qs(scope.get("query_string", b"").decode("latin-1")).get("sandbox") or [""])[0].strip().lower()
+        if not db.SANDBOX_RE.match(sb or ""):
+            sb = db.new_id("", 12)
+        await asyncio.to_thread(db.ensure_sandbox, sb)
+
+        async def send_with_id(message):
+            if message["type"] == "http.response.start":
+                message.setdefault("headers", [])
+                message["headers"] = list(message["headers"]) + [(b"x-ledgerlight-sandbox", sb.encode())]
+            await send(message)
+
+        with db.use_sandbox(sb):
+            await self.app(scope, receive, send_with_id)
+
+
+app.add_middleware(SandboxMiddleware)
 app.add_middleware(CORSMiddleware, allow_origins=os.environ.get("LEDGERLIGHT_CORS_ORIGINS", "*").split(","),
-                   allow_methods=["*"], allow_headers=["*"], expose_headers=["Content-Disposition"])
+                   allow_methods=["*"], allow_headers=["*"],
+                   expose_headers=["Content-Disposition", "X-Ledgerlight-Sandbox"])
 
 
 def who(role: str | None, user: str | None) -> tuple[str, str]:
@@ -142,7 +185,7 @@ def sample_thumb(sample_id: str, dpi: int = 40):
 @app.post("/api/demo/reset")
 async def demo_reset(x_ledgerlight_role: str | None = Header(None), x_ledgerlight_user: str | None = Header(None)):
     _, user = who(x_ledgerlight_role, x_ledgerlight_user)
-    res = await asyncio.to_thread(seed.reset_and_seed, user)
+    res = await asyncio.to_thread(seed.reset_sandbox if db.sandboxes_enabled() else seed.reset_and_seed, user)
     BUS.publish_global({"event": "demo_reset", "data": res})
     return res
 
@@ -330,6 +373,8 @@ async def run_events(run_id: str, request: Request, replay: bool = False, speed:
 
 @app.get("/api/stream/runs")
 async def stream_runs(request: Request):
+    mine = db.current_sandbox()
+
     async def gen():
         q = BUS.subscribe(None)
         n = 0
@@ -343,6 +388,8 @@ async def stream_runs(request: Request):
                 except asyncio.TimeoutError:
                     yield ": heartbeat\n\n"
                     continue
+                if ev.get("_sandbox") != mine:
+                    continue                      # another visitor's run
                 n += 1
                 yield f"id: {n}\nevent: {ev['event']}\ndata: {json.dumps(ev['data'], default=str)}\n\n"
         finally:

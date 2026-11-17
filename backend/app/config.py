@@ -57,6 +57,9 @@ BUYER = {
     "address": "Unit 4, Kalina Business Park, Santacruz East, Mumbai 400098",
 }
 
+# Public deployment: one private copy of the demo data per visitor (see db.py, "per-visitor sandboxes").
+SANDBOXES = os.environ.get("LEDGERLIGHT_SANDBOXES", "0") == "1"
+
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_PAGES = 10
 

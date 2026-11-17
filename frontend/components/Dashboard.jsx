@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { API, api, qs } from '@/lib/api';
+import { API, url, api, qs } from '@/lib/api';
 import { addDays, clamp, fmtDS, fmtDayS, fmtT, inr, inrP, inrP2, pct, secs } from '@/lib/format';
 import { Chip, ConfChip, Empty, ErrorBanner, Ic, OUT, OUT_COLOR, OUT_KEYS, PageHead, Shimmer, outKey, KEY2API, useApi, useApp } from '@/lib/ui';
 
@@ -223,7 +223,7 @@ export default function Dashboard() {
 
   async function exportCsv() {
     try {
-      const res = await fetch(`${API}/api/export/approved.csv?range=${range}d`);
+      const res = await fetch(url(`/api/export/approved.csv?range=${range}d`));
       const text = await res.text();
       const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv' })); a.download = `approved-invoices-${range}d.csv`; document.body.appendChild(a); a.click(); a.remove();
       toast('Approved invoices exported as CSV. The export was recorded in the audit log.');

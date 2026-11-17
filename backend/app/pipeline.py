@@ -202,7 +202,7 @@ class Runner:
             # the same batch would otherwise both pass R06, because each only sees invoices that already have a
             # decision.
             vendor = (self.ctx.get("vendor_match") or {}).get("vendor") or {}
-            with _vendor_lock(vendor.get("id") or "no-vendor"):
+            with _vendor_lock(f"{db.current_sandbox() or ''}:{vendor.get('id') or 'no-vendor'}"):
                 self.stage(5, self.s5_duplicate)
                 self.stage(6, self.s6_po)
                 self.stage(7, self.s7_validate)

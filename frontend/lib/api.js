@@ -14,10 +14,39 @@ export class ApiError extends Error {
   constructor(message, status, fields) { super(message); this.status = status; this.fields = fields || null; }
 }
 
-export const url = (path) => (path.startsWith('http') ? path : API + path);
+/* Per-visitor sandbox (public deployment): this browser's private copy of the demo data. The id is made here,
+   once, and kept in localStorage, so every request (including ones fired at the same moment on first load) uses
+   the same sandbox. It travels as a header on fetch calls and as ?sandbox= on URLs the browser loads by itself
+   (the live run stream, page images, PDF links). A backend without sandboxes ignores it. */
+const SB_KEY = 'll-sandbox';
+let memSandbox = '';
+export function sandboxId() {
+  if (typeof window === 'undefined') return '';
+  try {
+    let id = window.localStorage.getItem(SB_KEY);
+    if (!id || !/^[a-f0-9]{16,40}$/.test(id)) {
+      const b = new Uint8Array(12); window.crypto.getRandomValues(b);
+      id = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+      window.localStorage.setItem(SB_KEY, id);
+    }
+    return id;
+  } catch {
+    if (!memSandbox) { const b = new Uint8Array(12); window.crypto.getRandomValues(b); memSandbox = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join(''); }
+    return memSandbox;
+  }
+}
+
+export const url = (path) => {
+  const full = path.startsWith('http') ? path : API + path;
+  const sb = sandboxId();
+  if (!sb || !full.startsWith(API)) return full;
+  return full + (full.includes('?') ? '&' : '?') + 'sandbox=' + sb;
+};
 
 export async function api(path, { method = 'GET', body, form } = {}) {
   const headers = { 'X-Ledgerlight-Role': currentRole };
+  const sb = sandboxId();
+  if (sb) headers['X-Ledgerlight-Sandbox'] = sb;
   let payload;
   if (form) payload = form;
   else if (body !== undefined) { headers['Content-Type'] = 'application/json'; payload = JSON.stringify(body); }

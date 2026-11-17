@@ -165,3 +165,36 @@ npm run check                        # FRONTEND_URL / API_URL override the defau
 compares each label with `samples/expected.json` (SI-05 is Hold when no `ANTHROPIC_API_KEY` is set), does one
 override and finds it in S8, visits every screen counting console errors, asserts no dark-theme CSS is shipped, drops
 the live stream mid-run to prove reconnect loses nothing, and saves a screenshot per screen to `e2e/screenshots/`.
+
+## Deployment (public demo link)
+
+Backend on **Render** (free web service, `render.yaml`), frontend on **Vercel**. Full plan and checks:
+[docs/DEPLOY_PLAN.md](docs/DEPLOY_PLAN.md).
+
+**Per-visitor sandboxes.** With `LEDGERLIGHT_SANDBOXES=1` (set in `render.yaml`), every visitor gets a private copy
+of the demo data, cloned from a template seeded at startup (60 runs, 14 open exceptions). The browser makes the
+sandbox id once and keeps it in localStorage. It is sent as the `X-Ledgerlight-Sandbox` header, or as `?sandbox=`
+on URLs the browser loads by itself (the live run stream, page images, PDF links). So:
+
+- samples always give their designed decision, whoever ran them before;
+- **Reset demo** only resets that visitor's copy;
+- the live run stream and notifications only show that visitor's runs;
+- sandboxes unused for a day are deleted (at most 300 are kept);
+- the AI extraction cache is shared, so a scan read by Groq once is instant for everyone.
+
+Without the setting (local use, tests) there is one database, as before.
+
+**Steps**
+1. Push this repository to GitHub.
+2. Render: **New > Blueprint**, pick the repository. Enter `GROQ_API_KEY` (a new key) and
+   `LEDGERLIGHT_CORS_ORIGINS` (the Vercel URL, or `*` at first).
+3. Vercel: **Add New > Project**, root directory `frontend`, environment variable
+   `NEXT_PUBLIC_API_BASE` = the Render URL (for example `https://ledgerlight-api.onrender.com`).
+4. After each deploy, warm up the backend (wakes it and caches the SI-05 scan reading):
+
+```powershell
+backend\.venv\Scripts\python backend\scripts\warmup.py https://ledgerlight-api.onrender.com
+```
+
+The free Render instance sleeps after 15 minutes idle and its disk is temporary: open the link a minute before a
+demo, and warm up again after a deploy or restart.

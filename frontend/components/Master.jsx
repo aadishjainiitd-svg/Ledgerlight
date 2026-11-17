@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
-import { API, api, getApiRole, qs } from '@/lib/api';
+import { API, url, api, getApiRole, qs } from '@/lib/api';
 import { downloadText, fmtDay, inrP, num } from '@/lib/format';
 import { Chip, Empty, ErrorBanner, Ic, Modal, PageHead, Sheet, Shimmer, useApi, useApp } from '@/lib/ui';
 
@@ -206,7 +206,7 @@ function MasterInner() {
   const reloadAll = () => { pos.refresh(); vendors.refresh(); };
   async function exportKind() {
     const kind = tab === 'po' ? 'pos' : 'vendors';
-    try { const t = await (await fetch(`${API}/api/export/${kind}.csv`)).text(); downloadText(`${kind}.csv`, t, 'text/csv'); toast('Export ready. The export was recorded in the audit log.'); } catch { toast("Couldn't export. The server is not reachable."); }
+    try { const t = await (await fetch(url(`/api/export/${kind}.csv`))).text(); downloadText(`${kind}.csv`, t, 'text/csv'); toast('Export ready. The export was recorded in the audit log.'); } catch { toast("Couldn't export. The server is not reachable."); }
   }
   const poItems = pos.data ? pos.data.items : []; const vItems = vendors.data ? vendors.data.items : [];
   return (

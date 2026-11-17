@@ -43,6 +43,8 @@ class Bus:
         self._send(subs, ev)
 
     def publish_global(self, ev: dict) -> None:
+        # Stamp the visitor's sandbox so the global stream only delivers it to that visitor (sandbox mode).
+        ev = {**ev, "_sandbox": db.current_sandbox()}
         with self._lock:
             subs = set(self._global)
         self._send(subs, ev)

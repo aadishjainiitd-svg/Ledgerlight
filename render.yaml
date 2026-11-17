@@ -1,0 +1,28 @@
+# Render blueprint for the Ledgerlight backend (FastAPI). The frontend is deployed separately on Vercel.
+# Render dashboard: New > Blueprint > pick this repository. You will be asked for the values marked sync: false.
+services:
+  - type: web
+    name: ledgerlight-api
+    runtime: python
+    plan: free                      # sleeps after 15 min idle; open the link a minute before a demo
+    region: singapore
+    # Build from the repo root so samples/ (the demo invoices and seed data) is available to the backend.
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      # One private copy of the demo data per visitor (see backend/app/db.py, "per-visitor sandboxes").
+      - key: LEDGERLIGHT_SANDBOXES
+        value: "1"
+      # Free instances have a temporary disk: sandboxes and the AI cache are rebuilt after each deploy or restart.
+      - key: LEDGERLIGHT_DATA_DIR
+        value: /tmp/ledgerlight
+      # The Vercel URL of the frontend, e.g. https://ledgerlight.vercel.app ("*" allows any origin).
+      - key: LEDGERLIGHT_CORS_ORIGINS
+        sync: false
+      # A NEW Groq key from the Groq console. Entered in the Render dashboard, never committed.
+      - key: GROQ_API_KEY
+        sync: false

@@ -307,7 +307,7 @@ def extract(data: bytes, sha: str, *, scanned: bool, text_hint: str, use_cache: 
     mode = "scan2" if scanned else "single"
     key = cache_key(sha, mode)
     if use_cache:
-        with db.conn() as con:
+        with db.shared_conn() as con:          # shared by every visitor's sandbox
             r = con.execute("SELECT result FROM extraction_cache WHERE cache_key=?", (key,)).fetchone()
         if r:
             d = json.loads(r["result"])
@@ -354,7 +354,7 @@ def extract(data: bytes, sha: str, *, scanned: bool, text_hint: str, use_cache: 
     labels = {str(t.get("label", "")).upper() for t in out["tax_lines"]}
     if rates:
         out["tax_rate_pct"] = sum(rates) if any("CGST" in x for x in labels) and any("SGST" in x for x in labels) else rates[0]
-    with db.tx() as con:
+    with db.shared_conn() as con:
         con.execute("INSERT OR REPLACE INTO extraction_cache (cache_key, file_sha256, prompt_version, model, result, "
                     "created_at) VALUES (?,?,?,?,?,?)", (key, sha, config.PROMPT_VERSION, config.llm_model(),
                                                          json.dumps(out), db.now_iso()))

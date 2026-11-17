@@ -308,3 +308,23 @@ def reset_and_seed(actor: str = "system") -> dict:
 def ensure_seeded() -> None:
     if not is_seeded():
         reset_and_seed()
+
+
+def build_template() -> dict:
+    """Seed the template database that every visitor's sandbox is copied from (sandbox mode, at startup)."""
+    with db.use_sandbox(db.TEMPLATE):
+        return reset_and_seed()
+
+
+def reset_sandbox(actor: str = "system") -> dict:
+    """Demo reset for the current visitor only: a fresh copy of the template."""
+    sb = db.current_sandbox()
+    db.ensure_sandbox(sb, fresh=True)
+    with db.tx() as con:
+        db.audit(con, actor_type="human" if actor != "system" else "system", actor_id=actor, event_type="demo_reset",
+                 object_type="system", object_id="demo", summary="Demo data reset (this visitor's sandbox)", payload={})
+    with db.conn() as con:
+        runs = con.execute("SELECT COUNT(*) AS n FROM runs").fetchone()["n"]
+        open_exc = con.execute("SELECT COUNT(*) AS n FROM invoices i JOIN decisions d ON d.id=i.current_decision_id "
+                               "WHERE d.outcome IN ('route_for_review','hold_request_info')").fetchone()["n"]
+    return {"runs": runs, "named_history": [], "synthetic": None, "open_exceptions": open_exc, "sandbox": sb}

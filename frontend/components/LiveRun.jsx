@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { API, api } from '@/lib/api';
+import { API, url, api } from '@/lib/api';
 import { fmtTS, inrP, secs } from '@/lib/format';
 import { Chip, ConfChip, ErrorBanner, Ic, Modal, SevIcon, Shimmer, copyText, outKey, useApp } from '@/lib/ui';
 
@@ -154,7 +154,7 @@ export default function LiveRun({ runId }) {
       const p = new URLSearchParams();
       if (mode === 'replay') { p.set('replay', 'true'); p.set('speed', String(speed)); }
       if (lastId) p.set('last_event_id', String(lastId));
-      es = new EventSource(`${API}/api/runs/${runId}/events${p.toString() ? '?' + p : ''}`);
+      es = new EventSource(url(`/api/runs/${runId}/events${p.toString() ? '?' + p : ''}`));
       es.onopen = () => setConn(mode === 'replay' ? 'replay' : 'live');
       es.onerror = () => {
         if (doneRef.current || closed) return;
@@ -254,7 +254,7 @@ export default function LiveRun({ runId }) {
         <div className={`card canvas ${st.decision ? 'has-decision' : ''}`} id="canvas" data-state={st.completed ? 'done' : ''}>
           <div className="row" style={{ alignItems: 'flex-start', gap: 14, marginBottom: 14 }}>
             <button className={`docthumb ${scanned ? 'scanned' : ''}`} style={{ padding: 0 }} onClick={() => setZoom(true)} data-tip="Click to open a larger preview" aria-label="Open a larger preview of the invoice" disabled={!invoiceId}>
-              {st.stages[1].status === 'done' || st.stages[1].status === 'skipped' || finished ? <img src={`${API}/api/invoices/${invoiceId}/pages/1.png?dpi=45`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top' }} /> : <Shimmer h={96} />}
+              {st.stages[1].status === 'done' || st.stages[1].status === 'skipped' || finished ? <img src={url(`/api/invoices/${invoiceId}/pages/1.png?dpi=45`)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top' }} /> : <Shimmer h={96} />}
             </button>
             <div className="grow">
               <div className="row wrap gap-s"><h3 style={{ fontSize: 15 }}>Extracted fields</h3>{scanned ? <span className="pill accent">Scanned image</span> : doc ? <span className="pill">Text PDF</span> : null}</div>
@@ -265,7 +265,7 @@ export default function LiveRun({ runId }) {
           {needsAi ? (
             <div className="notice-scan" data-testid="needs-ai-notice">
               <Ic n="pause-circle" c="lg" />
-              <div><b>This scan needs AI extraction</b><p>It is an image with no text layer, and no AI key is set on this server. Ledgerlight does not guess at numbers it cannot read, so the invoice goes on hold with a clear reason. With an Anthropic API key set, the same file is read by the vision model and decided automatically.</p></div>
+              <div><b>This scan needs AI extraction</b><p>It is an image with no text layer, and no AI key is set on this server. Ledgerlight does not guess at numbers it cannot read, so the invoice goes on hold with a clear reason. With a Groq or Anthropic API key set on the server, the same file is read by the vision model and decided automatically.</p></div>
             </div>
           ) : (
             <div className="fgrid" id="fgrid" data-testid="field-grid">
@@ -322,8 +322,8 @@ export default function LiveRun({ runId }) {
       </div>
 
       <Modal open={zoom} onClose={() => setZoom(false)} label="Invoice preview">
-        <div className="sheet-h"><h3>{fileName}</h3><a className="btn sm right" href={`${API}/api/invoices/${invoiceId}/pdf`} target="_blank" rel="noreferrer">Open the PDF</a><button className="icon-btn" onClick={() => setZoom(false)} aria-label="Close"><Ic n="x" /></button></div>
-        <div className="paper-wrap">{invoiceId ? <img className="pdf-img" style={{ maxWidth: 560 }} src={`${API}/api/invoices/${invoiceId}/pages/1.png?dpi=110`} alt={`Page 1 of ${fileName}`} /> : null}</div>
+        <div className="sheet-h"><h3>{fileName}</h3><a className="btn sm right" href={url(`/api/invoices/${invoiceId}/pdf`)} target="_blank" rel="noreferrer">Open the PDF</a><button className="icon-btn" onClick={() => setZoom(false)} aria-label="Close"><Ic n="x" /></button></div>
+        <div className="paper-wrap">{invoiceId ? <img className="pdf-img" style={{ maxWidth: 560 }} src={url(`/api/invoices/${invoiceId}/pages/1.png?dpi=110`)} alt={`Page 1 of ${fileName}`} /> : null}</div>
       </Modal>
     </div>
   );
