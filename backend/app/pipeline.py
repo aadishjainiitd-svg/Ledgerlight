@@ -497,7 +497,14 @@ class Runner:
                     con.execute("UPDATE invoices SET vendor_id=? WHERE id=?", (v["id"], self.inv["id"]))
             else:
                 self.log(4, "fail", "No vendor in the master matches this invoice")
-            self.ctx["bank"] = matching.bank_compare(c["bank"], c["bank_change_notice"], v, c.get("bank_entries"))
+            notice_date = None
+            if c["bank_change_notice"]:
+                from datetime import timedelta  # noqa: PLC0415
+                from .textutil import parse_date  # noqa: PLC0415
+                notice_date = parse_date(c.get("bank_change_text") or "", as_of=self.ctx["as_of"])["value"] or (
+                    c["invoice_date"] - timedelta(days=60) if c.get("invoice_date") else None)
+            self.ctx["bank"] = matching.bank_compare(c["bank"], c["bank_change_notice"], v, c.get("bank_entries"),
+                                                     notice_date=notice_date)
         else:
             self.ctx["bank"] = {"status": "no_vendor"}
         for fn in STAGE_RULES[4]:
@@ -557,6 +564,11 @@ class Runner:
             v = self.ctx["vendor_match"].get("vendor")
             with db.conn() as con:
                 res = matching.resolve_po(con, c, v, self.cfg, self.inv["id"])
+                # Same vendor, same PO, within a week: value limits (R15 manager sign-off, R07 inferred-PO ceiling)
+                # apply to these together, so splitting one bill into two smaller invoices does not dodge them.
+                self.ctx["siblings"] = matching.recent_siblings(
+                    con, vendor_id=v["id"] if v else None, po_id=(res.get("po") or {}).get("id"),
+                    invoice_id=self.inv["id"], invoice_date=c.get("invoice_date"))
             self.ctx["po_res"] = res
             if res["method"] == "explicit":
                 self.log(6, "pass", f"Found {res['po']['id']} on the invoice" +

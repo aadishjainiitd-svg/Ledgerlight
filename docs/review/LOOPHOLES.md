@@ -2,6 +2,11 @@
 
 **Summary: 23 findings: 6 critical, 3 high, 8 medium, 6 low (51 cases run through the real API: 24 LOOPHOLE, 3 WEAK, 23 OK, 1 UNTESTED).**
 
+> **Status, 17 Nov 2026: all 23 findings are fixed.** Re-running the 49 text cases gives 49 OK
+> (`adversarial/results.after-fixes.json`; `results.json` keeps the original run). Each fix has a regression test
+> built from the attack PDF in `backend/tests/test_review_fixes.py`. The two scan cases (S01, S02) need a Groq or
+> Claude key and are not part of that re-run. The findings below describe the state at review time.
+
 Date: 16 Nov 2026 (the app's as-of date). Nothing in `backend/`, `frontend/`, `samples/` or the tests was changed.
 
 ## How to reproduce

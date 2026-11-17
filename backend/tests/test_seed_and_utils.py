@@ -45,7 +45,11 @@ def test_parse_money_indian_and_decimal_comma():
 
 
 def test_dates_day_first_and_ambiguity():
+    # Day first (the configured Indian order) gives a valid past date: that is how the date is written, not ambiguous.
     r = parse_date("12/11/26", as_of=date(2026, 11, 16))
+    assert r["value"] == date(2026, 11, 12) and not r["ambiguous"] and r["alternative"] == date(2026, 12, 11)
+    # Day first would be in the future, so month first is used: that fallback stays ambiguous and gets a note.
+    r = parse_date("11/12/26", as_of=date(2026, 11, 16))
     assert r["value"] == date(2026, 11, 12) and r["ambiguous"]
     assert parse_date("09-Nov-2026")["value"] == date(2026, 11, 9)
     assert parse_date("11 November 2026")["value"] == date(2026, 11, 11)

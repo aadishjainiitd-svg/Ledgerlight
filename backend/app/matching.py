@@ -77,6 +77,24 @@ def match_vendor(vendors: list[dict], name: str | None, gstin: str | None, fuzzy
     return res
 
 
+def recent_siblings(con, *, vendor_id: str | None, po_id: str | None, invoice_id: str, invoice_date,
+                    days: int = 7) -> list[dict]:
+    """Other invoices from the same vendor on the same PO, dated within `days`, that were not rejected."""
+    d0 = to_date(invoice_date)
+    if not vendor_id or not po_id or not d0:
+        return []
+    out = []
+    q = ("SELECT i.id, i.invoice_no_raw, i.invoice_date, i.total_paise, d.outcome FROM invoices i "
+         "JOIN decisions d ON d.id = i.current_decision_id "
+         "WHERE i.vendor_id = ? AND i.po_id = ? AND i.id != ? AND d.outcome != 'reject' AND i.is_synthetic = 0")
+    for r in con.execute(q, (vendor_id, po_id, invoice_id)):
+        d1 = to_date(r["invoice_date"])
+        if d1 and abs((d1 - d0).days) <= days and r["total_paise"]:
+            out.append({"invoice_no": r["invoice_no_raw"], "total_paise": r["total_paise"], "days_apart": abs((d1 - d0).days),
+                        "outcome": r["outcome"]})
+    return out
+
+
 def load_vendors(con: sqlite3.Connection) -> list[dict]:
     out = []
     for r in con.execute("SELECT * FROM vendors ORDER BY id"):
@@ -90,7 +108,8 @@ def _bank_key(name: str | None) -> str:
     return re.sub(r"[^a-z]", "", re.sub(r"\b(bank|ltd|limited|co|operative|the)\b", "", (name or "").lower()))
 
 
-def bank_compare(inv_bank: dict, notice: bool, vendor: dict | None, entries: list[dict] | None = None) -> dict:
+def bank_compare(inv_bank: dict, notice: bool, vendor: dict | None, entries: list[dict] | None = None,
+                 notice_date: date | None = None) -> dict:
     """Compare EVERY bank entry printed on the invoice with the vendor master. Any account or IFSC that differs is a
     mismatch. A bank that is named but whose account cannot be read, and that is not the bank on file, is
     'unreadable' (held, never treated as 'no bank details')."""
@@ -116,8 +135,11 @@ def bank_compare(inv_bank: dict, notice: bool, vendor: dict | None, entries: lis
     acct_ok, ifsc_ok = True, True
     if acct_ok and ifsc_ok and not notice:
         return {"status": "match", "match": True}
-    if acct_ok and ifsc_ok and acct and vendor.get("bank_verified_by") and vendor.get("bank_changed_at"):
-        # The change notice describes an account that a manager has already verified and recorded in the master.
+    verified_on = to_date(vendor.get("bank_changed_at"))
+    if acct_ok and ifsc_ok and acct and vendor.get("bank_verified_by") and verified_on and \
+            (notice_date is None or verified_on >= notice_date):
+        # The change notice describes an account that a manager verified and recorded in the master AFTER the
+        # change took effect. An older verification cannot cover a newer notice.
         return {"status": "match_verified_change", "match": True, "verified_by": vendor["bank_verified_by"],
                 "changed_at": vendor["bank_changed_at"]}
     return {"status": "mismatch" if not (acct_ok and ifsc_ok) else "notice_only", "match": False,
@@ -271,6 +293,8 @@ def po_position(con, po_id: str, exclude_invoice_id: str | None = None) -> dict 
         l["pending_qty"] = 0.0
         l["pending_value_paise"] = 0
         l["pending_from"] = []        # invoice numbers waiting in review/hold that claim this line
+        l["over_billed_paise"] = 0    # sum billed above the PO price by earlier invoices on this line
+        l["over_from"] = []
     history = []
     q = ("SELECT i.id, i.invoice_no_raw, i.invoice_date, i.total_paise, i.subtotal_paise, i.paid_at, i.is_synthetic, "
          "i.current_run_id, d.outcome, d.made_by FROM invoices i LEFT JOIN decisions d ON d.id = i.current_decision_id "
@@ -297,6 +321,13 @@ def po_position(con, po_id: str, exclude_invoice_id: str | None = None) -> dict 
                 pl[f"{bucket}_value_paise"] += int(a.get("amount_paise") or 0)
                 if bucket == "pending" and inv["invoice_no_raw"] and inv["invoice_no_raw"] not in pl["pending_from"]:
                     pl["pending_from"].append(inv["invoice_no_raw"])
+                # Earlier invoices billed above the PO price on this line (small "noted" overcharges add up).
+                q_al, amt = float(a.get("qty") or 0), int(a.get("amount_paise") or 0)
+                exp = int(round(q_al * pl["unit_price_paise"]))
+                if q_al > 0 and exp and amt - exp > 0.005 * exp:
+                    pl["over_billed_paise"] += amt - exp
+                    if inv["invoice_no_raw"] and inv["invoice_no_raw"] not in pl["over_from"]:
+                        pl["over_from"].append(inv["invoice_no_raw"])
     subtotal = sum(int(round(l["ordered_qty"] * l["unit_price_paise"])) for l in lines)
     tax = sum(int(round(l["ordered_qty"] * l["unit_price_paise"] * (l["tax_rate_pct"] or 0) / 100)) for l in lines)
     billed = sum(l["billed_value_paise"] for l in lines)

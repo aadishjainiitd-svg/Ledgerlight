@@ -45,17 +45,20 @@ def test_ec3_scan_with_simulated_vision_model(fresh_db, monkeypatch):
     out = run_sample("SI-05")
     d = out["decision"]
     assert d["outcome"] == "approve_with_note", d["headline"]
-    assert json.loads(d["driving_rule_ids"]) == ["R07", "R02"]
+    # The note comes from the inferred PO. "12/11/26" read day first is 12 Nov, a valid past date, so the date is
+    # not treated as ambiguous any more.
+    assert json.loads(d["driving_rule_ids"]) == ["R07"]
     # two passes for a scan: PDF document block, then a rendered page image in a different reading order
     assert calls[0][0] == "document" and calls[1][0] == "image"
     r07 = json.loads(out["rules"]["R07"]["facts"])
     assert r07["method"] == "implied" and r07["po_id"] == "PO-2026-1005" and r07["score"] >= 0.9 and r07["gap"] >= 0.2
     r02 = json.loads(out["rules"]["R02"]["facts"])
-    assert r02["lowest"] == 0.80 and r02["lowest_field"] == "Invoice date"
+    assert r02["lowest_field"] != "Invoice date"
     assert any(b["field"] == "Total" and b["to"] == 0.92 for b in r02["boosted"])
     expl = json.loads(d["explanation"])
     assert expl["headline"].startswith("Approved with a note: we matched this invoice to a purchase order")
-    assert any("₹75,000 plus ₹3,750 equals ₹78,750" in a for a in expl["attention"])
+    # The smudged total is confirmed by the arithmetic; R02 says so (it no longer drives the decision).
+    assert "raised to 0.92 because lines plus tax equal the total" in out["rules"]["R02"]["message_plain"]
 
 
 def test_polish_fact_check_rejects_new_numbers():

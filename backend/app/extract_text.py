@@ -77,7 +77,8 @@ MONEY_RE = re.compile(
 DATE_RE = re.compile(
     r"\d{1,2}(?:st|nd|rd|th)?[\-/. ]+[A-Za-z]{3,9}\.?[\-/., ]+\d{2,4}|\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}"
     r"|\d{4}-\d{2}-\d{2}|[A-Za-z]{3,9}\.? \d{1,2},? \d{4}")
-INVNO_RE = re.compile(r"(?=[A-Z0-9/\-.]*\d)[A-Z][A-Z0-9]*(?:[/\-.][A-Z0-9]+)+|[A-Z]{1,5}\d{3,}|\d{3,}(?:[/\-][A-Z0-9]+)*")
+INVNO_RE = re.compile(r"(?=[A-Z0-9/\-.]*\d)[A-Z][A-Z0-9]*(?:[/\-.][A-Z0-9]+)+|[A-Z]{1,5}\d{3,}|\d{3,}(?:[/\-][A-Z0-9]+)*",
+                      re.I)
 PO_VAL_RE = re.compile(r"P\.?O\.?[\s\-#]?\d{4}[\s\-/]\d{3,5}|\d{3,5}/20\d{2}|20\d{2}[\-/]\d{3,5}", re.I)
 
 LBL_INVNO = re.compile(r"\b(?:invoice|inv|bill)\.?\s*(?:no\b\.?|number\b|num\b|#)", re.I)
@@ -290,6 +291,11 @@ def parse_table(rows: list[Row], low_conf: bool) -> tuple[list[dict], bool, int 
             q = cellmap.get("qty")
             if amount and money_in(amount) and (q or cellmap.get("rate")):
                 qn = parse_number(q) if q else None
+                # A credit line ("Less: returned chairs (2) ... (13,000.00)") reduces the bill: keep its sign.
+                credit = bool(re.search(r"\(\s*[\d,]+(?:\.\d+)?\s*\)|^\s*-\s*\d", amount)) or \
+                    bool(re.match(r"\s*(?:\d+\s+)?less\b", cellmap.get("desc") or "", re.I))
+                if credit and qn:
+                    qn = -abs(qn)
                 uom = cellmap.get("uom")
                 if q and not uom:
                     m = re.search(r"[A-Za-z]+\.?$", q.strip())
@@ -300,7 +306,7 @@ def parse_table(rows: list[Row], low_conf: bool) -> tuple[list[dict], bool, int 
                     "qty": qn,
                     "uom": uom,
                     "unit_price": (money_in(cellmap.get("rate") or "") or [cellmap.get("rate")])[0],
-                    "amount": money_in(amount)[-1],
+                    "amount": ("-" if credit else "") + money_in(amount)[-1],
                     "tax_rate_pct": parse_number(cellmap.get("taxrate")) if cellmap.get("taxrate") else None,
                     "confidence": conf,
                     "raw_text": r.text,
@@ -373,9 +379,14 @@ INCLUSIVE_RE = re.compile(r"inclusive of (?:i|c|s)?gst|incl(?:usive|\.)? (?:of )
 RATE_RE = re.compile(r"@?\s*(\d{1,2}(?:\.\d+)?)\s*%")
 
 
+CHARGE_RE = re.compile(r"\b(freight|carriage|packing|forwarding|insurance|handling|loading|delivery\s+charges?|"
+                       r"courier|transport(?:ation)?\s+charges?|round(?:ing)?[\s\-]*off)\b", re.I)
+DISCOUNT_RE = re.compile(r"\b(discount|rebate)\b", re.I)
+
+
 def parse_totals(rows: list[Row], start: int) -> dict:
     res = {"subtotal": None, "tax_total": None, "total": None, "tax_lines": [], "inclusive": False,
-           "inclusive_rate": None}
+           "inclusive_rate": None, "other_paise": 0, "discount_paise": 0, "other_labels": []}
     total_rank = 99
     for ri in range(start, len(rows)):
         t = rows[ri].text
@@ -396,6 +407,16 @@ def parse_totals(rows: list[Row], start: int) -> dict:
             continue
         if TAX_TOTAL_RE.search(t):
             res["tax_total"] = amounts[-1]
+            continue
+        if CHARGE_RE.search(t) and not re.search(r"\btotal\b", tl):
+            # freight, packing, insurance, round off ... between the subtotal and the total
+            sign = -1 if re.search(r"\(\s*[\d,.]+\s*\)|-\s*[\d,.]+\s*$", t) else 1
+            res["other_paise"] += sign * (parse_money(amounts[-1]) or 0)
+            res["other_labels"].append(t.strip())
+            continue
+        if DISCOUNT_RE.search(t) and not re.search(r"\btotal\b", tl):
+            res["discount_paise"] += abs(parse_money(amounts[-1]) or 0)
+            res["other_labels"].append(t.strip())
             continue
         if TAX_RE.search(tl.replace("gstin", "")) and not re.search(r"\btotal\b|payable", tl):
             m = RATE_RE.search(t)
@@ -538,11 +559,27 @@ def extract(data: bytes, text_source: str = "text_layer") -> dict:
 
     currency = None
     cur_raw = None
-    m = re.search(r"₹|\bINR\b|\bRs\.?(?![A-Za-z])", full)
-    if m:
-        currency, cur_raw = "INR", m.group(0)
-    elif re.search(r"\bUSD\b|\$", full):
-        currency, cur_raw = "USD", "USD"
+    cur_note = None
+    # 1) an explicit label ("Currency: USD", "Grand Total (USD)") wins over symbols elsewhere on the page,
+    #    e.g. "(INR account)" in the bank block of a USD invoice
+    lab = (re.search(r"\bcurrency\s*[:\-]?\s*(INR|USD|EUR|GBP)\b", full, re.I)
+           or re.search(r"\btotal\b[^\n]{0,25}?\(\s*(INR|USD|EUR|GBP)\s*\)", full, re.I))
+    if lab:
+        currency, cur_raw = lab.group(1).upper(), lab.group(0)
+    else:
+        m = re.search(r"₹|\bINR\b|\bRs\.?(?![A-Za-z])", full)
+        if m:
+            currency, cur_raw = "INR", m.group(0)
+        elif re.search(r"\bUSD\b|\$", full):
+            currency, cur_raw = "USD", "USD"
+        elif re.search(r"\bEUR\b|€", full):
+            currency, cur_raw = "EUR", "EUR"
+        else:
+            # 3) no currency printed at all: a GST invoice (CGST/SGST/IGST lines) is billed in rupees
+            g = re.search(r"\b(?:CGST|SGST|IGST|UTGST)\b", full)
+            if g:
+                currency, cur_raw = "INR", g.group(0)
+                cur_note = "No currency is printed; it is a GST invoice, so the amounts were read as rupees."
 
     incl = tot["inclusive"] or incl_hdr
     rate = tot["inclusive_rate"]
@@ -571,6 +608,8 @@ def extract(data: bytes, text_source: str = "text_layer") -> dict:
         notes.append("Prices are printed inclusive of GST.")
     if bank["notice"]:
         notes.append("The invoice says the vendor's bank details have changed.")
+    if cur_note:
+        notes.append(cur_note)
 
     return {
         "extractor": "text-parser",
@@ -598,7 +637,8 @@ def extract(data: bytes, text_source: str = "text_layer") -> dict:
         "bank_change_text": bank["notice_text"],
         "bank_entries": bank["entries"],
         "po_reference_candidates": po_cands,
-        "other_charges": None,
-        "discount": None,
+        "other_charges": f"{tot['other_paise'] / 100:.2f}" if tot["other_paise"] else None,
+        "discount": f"{tot['discount_paise'] / 100:.2f}" if tot["discount_paise"] else None,
+        "other_charge_labels": tot["other_labels"],
         "document_notes": " ".join(notes),
     }

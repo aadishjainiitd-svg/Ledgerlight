@@ -101,8 +101,7 @@
       ],
       "expected_outcome": "approve_with_note",
       "driving_rules": [
-        "R07",
-        "R02"
+        "R07"
       ],
       "invoice_no": "GL-2291",
       "gross_paise": 7875000,

@@ -193,3 +193,81 @@ def test_h3_two_page_invoice_reads_all_lines_and_approves(fresh_db):
         n = con.execute("SELECT COUNT(*) AS n FROM line_items li JOIN decisions d ON d.invoice_id = li.invoice_id "
                         "WHERE d.id = ?", (d["id"],)).fetchone()["n"]
     assert n == 2
+
+
+# ------------------------------------------------------------------ medium and low findings
+def test_m1_wrong_line_arithmetic_is_rejected(fresh_db):
+    d = run("A10_line_maths.pdf")                 # 10 x 6,500.00 printed as 66,235.00
+    assert d["outcome"] == "reject" and d["driving"][0] == "R14", (d["outcome"], d["driving"])
+    assert json.loads(d["rules"]["R14"]["facts"])["difference_paise"] == 123500
+
+
+def test_m2_repeated_small_overcharges_go_to_review(fresh_db):
+    outs = [run(f"A11_salami_{i}.pdf") for i in (1, 2, 3)]
+    assert outs[0]["outcome"] == "approve_with_note"
+    assert [o["outcome"] for o in outs[1:]] == ["route_for_review", "route_for_review"]
+    assert outs[1]["rules"]["R10"]["severity"] == "review"
+
+
+def test_l1_tiny_lines_floor_applies_to_the_whole_invoice(fresh_db):
+    d = run("A12_tiny_lines.pdf")
+    assert d["outcome"] == "route_for_review" and d["rules"]["R10"]["severity"] == "review"
+
+
+def test_m3_split_invoices_hit_the_limits_together(fresh_db):
+    admin.create_po({"id": "PO-2026-2001", "vendor_id": "V-101", "issue_date": "2026-11-01", "valid_to": "2026-12-31",
+                     "currency": "INR", "lines": [{"item_code": "CH-ERG-01", "description": "Ergonomic mesh chair",
+                                                   "uom": "nos", "ordered_qty": 200, "unit_price": "6500",
+                                                   "tax_rate_pct": 18}]}, user="pytest")
+    assert run("A13_split_a.pdf")["outcome"] == "auto_approve"
+    b = run("A13_split_b.pdf")
+    assert b["outcome"] == "route_for_review" and b["rules"]["R15"]["severity"] == "review"
+    run("A14_split_a.pdf")
+    b = run("A14_split_b.pdf")
+    assert b["outcome"] == "route_for_review" and b["rules"]["R07"]["severity"] == "review"
+
+
+def test_m4_tax_invoice_without_supplier_gstin_goes_to_review(fresh_db):
+    d = run("A16_no_gstin.pdf")
+    assert d["outcome"] == "route_for_review" and d["rules"]["R04"]["severity"] == "review"
+
+
+def test_m5_unknown_po_reference_is_named(fresh_db):
+    d = run("A17_bad_po.pdf")
+    assert d["outcome"] == "route_for_review" and "PO-2026-1099" in d["rules"]["R07"]["message_plain"]
+
+
+def test_m6_usd_label_beats_inr_elsewhere(fresh_db):
+    d = run("A18_usd.pdf")
+    assert d["outcome"] == "route_for_review" and d["rules"]["R16"]["severity"] == "review"
+
+
+def test_m7_freight_line_adds_up_and_is_noted(fresh_db):
+    d = run("B01_freight.pdf")
+    assert d["outcome"] == "approve_with_note" and d["rules"]["R14"]["severity"] == "note"
+
+
+def test_m8_returned_goods_line_is_a_credit(fresh_db):
+    assert run("B04_return_line.pdf")["outcome"] == "auto_approve"
+
+
+def test_l2_no_currency_symbol_on_a_gst_invoice_is_rupees(fresh_db):
+    assert run("B03_no_currency.pdf")["outcome"] == "auto_approve"
+
+
+def test_l3_lower_case_invoice_number_is_read(fresh_db):
+    assert run("B07_lowercase_no.pdf")["outcome"] == "auto_approve"
+
+
+def test_l4_normal_day_first_date_is_not_hard_to_read(fresh_db):
+    assert run("W01_ddmm_date.pdf")["outcome"] == "auto_approve"
+    d = run("K10_ambiguous_date.pdf")            # day first would be in the future: a date-specific note
+    assert d["outcome"] == "approve_with_note"
+    assert "could be read two ways" in d["headline"].lower() or "two ways" in d["rules"]["R02"]["message_plain"]
+
+
+def test_l5_old_verification_does_not_cover_a_new_bank_notice(fresh_db):
+    d = run("B06_notice_same_acct.pdf")
+    r05 = d["rules"]["R05"]
+    assert d["outcome"] == "hold_request_info" and r05["severity"] == "hold"
+    assert "already have" in r05["message_plain"] and "new account" not in r05["message_plain"]

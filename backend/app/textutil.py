@@ -153,6 +153,10 @@ def parse_date(text, as_of: date | None = None, day_first: bool = True) -> dict:
             if as_of and first > as_of and second <= as_of:
                 chosen, other = second, first
             res["value"], res["alternative"] = chosen, other
+            # The configured order (day first for India) giving a valid date that is not in the future is how
+            # this team writes dates, not an ambiguity. Only a fallback to the other order stays ambiguous.
+            if chosen == first:
+                res["ambiguous"] = False
             order = "day first" if chosen == first else "month first"
             res["note"] = (f'"{m.group(0)}" could be {fmt_date(first)} or {fmt_date(second)}. '
                            f"Read as {fmt_date(chosen)} ({order})"

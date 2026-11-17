@@ -10,7 +10,7 @@
   "severity_if_wrong": "medium",
   "verdict": "OK",
   "actual": "APPROVE [-]",
-  "seconds": 4.3,
+  "seconds": 9.4,
   "results": [
    {
     "file": "K01_clean.pdf",
@@ -59,24 +59,20 @@
    "approve_with_note"
   ],
   "severity_if_wrong": "low",
-  "verdict": "WEAK",
-  "actual": "APPROVE+NOTE [R02]  (a clean text PDF is told 'some fields were hard to read'; the date is only format-ambiguous)",
-  "seconds": 5.2,
+  "verdict": "OK",
+  "actual": "APPROVE [-]",
+  "seconds": 9.3,
   "results": [
    {
     "file": "W01_ddmm_date.pdf",
     "status": "completed",
     "error": null,
-    "outcome": "approve_with_note",
-    "driving": [
-     "R02"
-    ],
-    "headline": "Approved with a note: some fields were hard to read, but the numbers check out.",
+    "outcome": "auto_approve",
+    "driving": [],
+    "headline": "Approved: everything checks out and it is safe to pay.",
     "exposure_paise": 0,
     "assigned_to": null,
-    "flagged": {
-     "R02": "note: Lowest confidence is the invoice date at 0.80 (it could be read two ways)."
-    },
+    "flagged": {},
     "invoice_no": "BLS/26-27/0602",
     "total_paise": 7670000,
     "vendor_id": "V-101",
@@ -94,11 +90,9 @@
      "Total adds up",
      "Bank account matches the one on file",
      "Not a duplicate",
-     "Date read as 10 Nov 2026"
+     "Invoice date is valid"
     ],
-    "attention": [
-     "The date \"10/11/2026\" was read as 10 November 2026."
-    ],
+    "attention": [],
     "explanation_mode": null
    }
   ],
@@ -119,7 +113,7 @@
   "severity_if_wrong": "critical",
   "verdict": "OK",
   "actual": "REVIEW [R14]",
-  "seconds": 4.2,
+  "seconds": 9.2,
   "results": [
    {
     "file": "A01_subtotal_gap.pdf",
@@ -175,7 +169,7 @@
   "severity_if_wrong": "critical",
   "verdict": "OK",
   "actual": "HOLD [R05]",
-  "seconds": 4.8,
+  "seconds": 9.3,
   "results": [
    {
     "file": "A02_second_bank_line.pdf",
@@ -231,7 +225,7 @@
   "severity_if_wrong": "critical",
   "verdict": "OK",
   "actual": "HOLD [R05]",
-  "seconds": 4.4,
+  "seconds": 9.3,
   "results": [
    {
     "file": "A03_hyphen_account.pdf",
@@ -287,7 +281,7 @@
   "severity_if_wrong": "critical",
   "verdict": "OK",
   "actual": "HOLD [R05]",
-  "seconds": 4.8,
+  "seconds": 9.3,
   "results": [
    {
     "file": "A04_hidden_bank.pdf",
@@ -341,11 +335,43 @@
   ],
   "severity_if_wrong": "critical",
   "verdict": "OK",
-  "actual": "REJECT [R06] | APPROVE [-]",
-  "seconds": 5.5,
+  "actual": "APPROVE [-] | REJECT [R06]",
+  "seconds": 11.6,
   "results": [
    {
     "file": "A05_copy1.pdf",
+    "status": "completed",
+    "error": null,
+    "outcome": "auto_approve",
+    "driving": [],
+    "headline": "Approved: everything checks out and it is safe to pay.",
+    "exposure_paise": 0,
+    "assigned_to": null,
+    "flagged": {},
+    "invoice_no": "GL-2390",
+    "total_paise": 2016000,
+    "vendor_id": "V-104",
+    "po_id": "PO-2026-1007",
+    "po_method": "explicit",
+    "r05": "Bank account ending 5508 on the invoice matches the account on file.",
+    "r10": "Unit prices match the PO on all 2 lines.",
+    "ok": [
+     "Vendor approved (matched by GSTIN 27AAJFG9054R1Z2)",
+     "PO-2026-1007 found on the invoice",
+     "Prices match the PO",
+     "Quantities are within what is left on the order",
+     "Every line is on the PO",
+     "GST at 12% is calculated correctly",
+     "Total adds up",
+     "Bank account matches the one on file",
+     "Not a duplicate",
+     "Invoice date is valid"
+    ],
+    "attention": [],
+    "explanation_mode": null
+   },
+   {
+    "file": "A05_copy2.pdf",
     "status": "completed",
     "error": null,
     "outcome": "reject",
@@ -380,38 +406,6 @@
      "Exact copy of a file we already processed (same file hash), invoice GL-2390 from Greenleaf (\u20b920,160.00, dated 14 Nov 2026), which was approved on 17 Nov 2026."
     ],
     "explanation_mode": null
-   },
-   {
-    "file": "A05_copy2.pdf",
-    "status": "completed",
-    "error": null,
-    "outcome": "auto_approve",
-    "driving": [],
-    "headline": "Approved: everything checks out and it is safe to pay.",
-    "exposure_paise": 0,
-    "assigned_to": null,
-    "flagged": {},
-    "invoice_no": "GL-2390",
-    "total_paise": 2016000,
-    "vendor_id": "V-104",
-    "po_id": "PO-2026-1007",
-    "po_method": "explicit",
-    "r05": "Bank account ending 5508 on the invoice matches the account on file.",
-    "r10": "Unit prices match the PO on all 2 lines.",
-    "ok": [
-     "Vendor approved (matched by GSTIN 27AAJFG9054R1Z2)",
-     "PO-2026-1007 found on the invoice",
-     "Prices match the PO",
-     "Quantities are within what is left on the order",
-     "Every line is on the PO",
-     "GST at 12% is calculated correctly",
-     "Total adds up",
-     "Bank account matches the one on file",
-     "Not a duplicate",
-     "Invoice date is valid"
-    ],
-    "attention": [],
-    "explanation_mode": null
    }
   ],
   "files": [
@@ -432,7 +426,7 @@
   "severity_if_wrong": "high",
   "verdict": "OK",
   "actual": "REVIEW [R10] | REVIEW [R11,R12]",
-  "seconds": 5.5,
+  "seconds": 11.7,
   "results": [
    {
     "file": "A06_a_pending.pdf",
@@ -532,7 +526,7 @@
   "severity_if_wrong": "critical",
   "verdict": "OK",
   "actual": "HOLD [R01]",
-  "seconds": 4.4,
+  "seconds": 9.1,
   "results": [
    {
     "file": "A07_credit_note.pdf",
@@ -577,7 +571,7 @@
   "severity_if_wrong": "high",
   "verdict": "OK",
   "actual": "HOLD [R01] | REVIEW [R11,R12]",
-  "seconds": 7.0,
+  "seconds": 11.3,
   "results": [
    {
     "file": "A07b_credit_note.pdf",
@@ -664,7 +658,7 @@
   "severity_if_wrong": "high",
   "verdict": "OK",
   "actual": "HOLD [R01]",
-  "seconds": 5.0,
+  "seconds": 8.8,
   "results": [
    {
     "file": "A08_proforma.pdf",
@@ -710,7 +704,7 @@
   "severity_if_wrong": "critical",
   "verdict": "OK",
   "actual": "REJECT [R10]",
-  "seconds": 5.2,
+  "seconds": 9.1,
   "results": [
    {
     "file": "A09_no_qty.pdf",
@@ -765,23 +759,24 @@
    "reject"
   ],
   "severity_if_wrong": "medium",
-  "verdict": "LOOPHOLE",
-  "actual": "APPROVE+NOTE [R10]",
-  "seconds": 5.1,
+  "verdict": "OK",
+  "actual": "REJECT [R14]",
+  "seconds": 9.1,
   "results": [
    {
     "file": "A10_line_maths.pdf",
     "status": "completed",
     "error": null,
-    "outcome": "approve_with_note",
+    "outcome": "reject",
     "driving": [
-     "R10"
+     "R14"
     ],
-    "headline": "Approved with a note: the vendor billed 1.9% more than the PO, which is within the allowed difference.",
-    "exposure_paise": 0,
-    "assigned_to": null,
+    "headline": "Reject: the invoice's own line arithmetic is wrong.",
+    "exposure_paise": 123500,
+    "assigned_to": "clerk",
     "flagged": {
-     "R10": "note: Price per chair is \u20b96,623.50 against \u20b96,500.00 on the PO: 1.9% above (\u20b91,235 on this invoice). Allowed: up to 2% and \u20b95,000."
+     "R10": "note: Price per chair is \u20b96,623.50 against \u20b96,500.00 on the PO: 1.9% above (\u20b91,235 on this invoice). Allowed: up to 2% and \u20b95,000.",
+     "R14": "reject: Line 1: 10 x \u20b96,500.00 is \u20b965,000.00, but the invoice says \u20b966,235.00 (\u20b91,235.00 more)."
     },
     "invoice_no": "BLS/26-27/0613",
     "total_paise": 7815730,
@@ -796,12 +791,12 @@
      "Quantities are within what is left on the order",
      "Every line is on the PO",
      "GST at 18% is calculated correctly",
-     "Total adds up",
      "Bank account matches the one on file",
      "Not a duplicate",
      "Invoice date is valid"
     ],
     "attention": [
+     "Line 1: 10 x \u20b96,500.00 is \u20b965,000.00, but the invoice says \u20b966,235.00 (\u20b91,235.00 more).",
      "The vendor billed \u20b91,235 (1.9%) more than the PO. That is inside the allowed difference of 2% and \u20b95,000, so we approved it and attached a note."
     ],
     "explanation_mode": null
@@ -820,9 +815,9 @@
    "route_for_review"
   ],
   "severity_if_wrong": "medium",
-  "verdict": "LOOPHOLE",
-  "actual": "APPROVE+NOTE [R10] | APPROVE+NOTE [R10] | APPROVE+NOTE [R10]",
-  "seconds": 8.6,
+  "verdict": "OK",
+  "actual": "APPROVE+NOTE [R10] | REVIEW [R10] | REVIEW [R10]",
+  "seconds": 14.1,
   "results": [
    {
     "file": "A11_salami_1.pdf",
@@ -865,15 +860,15 @@
     "file": "A11_salami_2.pdf",
     "status": "completed",
     "error": null,
-    "outcome": "approve_with_note",
+    "outcome": "route_for_review",
     "driving": [
      "R10"
     ],
-    "headline": "Approved with a note: the vendor billed 1.98% more than the PO, which is within the allowed difference.",
-    "exposure_paise": 0,
-    "assigned_to": null,
+    "headline": "Review needed: the vendor keeps billing slightly above the PO price on the same line.",
+    "exposure_paise": 139830,
+    "assigned_to": "clerk",
     "flagged": {
-     "R10": "note: Price per carton is \u20b940.79 against \u20b940.00 on the PO: 1.98% above (\u20b9632 on this invoice). Allowed: up to 2% and \u20b95,000."
+     "R10": "review: Price per carton is \u20b940.79 against \u20b940.00 on the PO (1.98% above). Invoice K/1260 on the same PO line was also billed above the PO price: together \u20b91,185 over."
     },
     "invoice_no": "K/1261",
     "total_paise": 3850576,
@@ -881,7 +876,7 @@
     "po_id": "PO-2026-1004",
     "po_method": "explicit",
     "r05": "Bank account ending 2214 on the invoice matches the account on file.",
-    "r10": "Price per carton is \u20b940.79 against \u20b940.00 on the PO: 1.98% above (\u20b9632 on this invoice). Allowed: up to 2% and \u20b95,000.",
+    "r10": "Price per carton is \u20b940.79 against \u20b940.00 on the PO (1.98% above). Invoice K/1260 on the same PO line was also billed above the PO price: together \u20b91,185 over.",
     "ok": [
      "Vendor approved (matched by GSTIN 24AAMFK3302Q1Z6)",
      "PO-2026-1004 found on the invoice",
@@ -894,7 +889,7 @@
      "Invoice date is valid"
     ],
     "attention": [
-     "The vendor billed \u20b9632 (1.98%) more than the PO. That is inside the allowed difference of 2% and \u20b95,000, so we approved it and attached a note."
+     "Price per carton is \u20b940.79 against \u20b940.00 on the PO (1.98% above). Invoice K/1260 on the same PO line was also billed above the PO price: together \u20b91,185 over."
     ],
     "explanation_mode": null
    },
@@ -902,15 +897,15 @@
     "file": "A11_salami_3.pdf",
     "status": "completed",
     "error": null,
-    "outcome": "approve_with_note",
+    "outcome": "route_for_review",
     "driving": [
      "R10"
     ],
-    "headline": "Approved with a note: the vendor billed 1.98% more than the PO, which is within the allowed difference.",
-    "exposure_paise": 0,
-    "assigned_to": null,
+    "headline": "Review needed: the vendor keeps billing slightly above the PO price on the same line.",
+    "exposure_paise": 223728,
+    "assigned_to": "clerk",
     "flagged": {
-     "R10": "note: Price per carton is \u20b940.79 against \u20b940.00 on the PO: 1.98% above (\u20b9711 on this invoice). Allowed: up to 2% and \u20b95,000."
+     "R10": "review: Price per carton is \u20b940.79 against \u20b940.00 on the PO (1.98% above). Invoice K/1260, K/1261 on the same PO line was also billed above the PO price: together \u20b91,896 over."
     },
     "invoice_no": "K/1262",
     "total_paise": 4331898,
@@ -918,7 +913,7 @@
     "po_id": "PO-2026-1004",
     "po_method": "explicit",
     "r05": "Bank account ending 2214 on the invoice matches the account on file.",
-    "r10": "Price per carton is \u20b940.79 against \u20b940.00 on the PO: 1.98% above (\u20b9711 on this invoice). Allowed: up to 2% and \u20b95,000.",
+    "r10": "Price per carton is \u20b940.79 against \u20b940.00 on the PO (1.98% above). Invoice K/1260, K/1261 on the same PO line was also billed above the PO price: together \u20b91,896 over.",
     "ok": [
      "Vendor approved (matched by GSTIN 24AAMFK3302Q1Z6)",
      "PO-2026-1004 found on the invoice",
@@ -931,7 +926,7 @@
      "Invoice date is valid"
     ],
     "attention": [
-     "The vendor billed \u20b9711 (1.98%) more than the PO. That is inside the allowed difference of 2% and \u20b95,000, so we approved it and attached a note."
+     "Price per carton is \u20b940.79 against \u20b940.00 on the PO (1.98% above). Invoice K/1260, K/1261 on the same PO line was also billed above the PO price: together \u20b91,896 over."
     ],
     "explanation_mode": null
    }
@@ -953,31 +948,34 @@
    "reject"
   ],
   "severity_if_wrong": "low",
-  "verdict": "LOOPHOLE",
-  "actual": "APPROVE [-]",
-  "seconds": 5.2,
+  "verdict": "OK",
+  "actual": "REVIEW [R10]",
+  "seconds": 9.4,
   "results": [
    {
     "file": "A12_tiny_lines.pdf",
     "status": "completed",
     "error": null,
-    "outcome": "auto_approve",
-    "driving": [],
-    "headline": "Approved: everything checks out and it is safe to pay.",
-    "exposure_paise": 0,
-    "assigned_to": null,
-    "flagged": {},
+    "outcome": "route_for_review",
+    "driving": [
+     "R10"
+    ],
+    "headline": "Review needed: several small lines are priced well above the purchase order.",
+    "exposure_paise": 24500,
+    "assigned_to": "clerk",
+    "flagged": {
+     "R10": "review: 5 small lines are priced above the PO. Each is only a few rupees over, but together they are \u20b9245 (122.5%) over."
+    },
     "invoice_no": "GL-2395",
     "total_paise": 1841840,
     "vendor_id": "V-104",
     "po_id": "PO-2026-1007",
     "po_method": "explicit",
     "r05": "Bank account ending 5508 on the invoice matches the account on file.",
-    "r10": "Unit prices match the PO on all 6 lines.",
+    "r10": "5 small lines are priced above the PO. Each is only a few rupees over, but together they are \u20b9245 (122.5%) over.",
     "ok": [
      "Vendor approved (matched by GSTIN 27AAJFG9054R1Z2)",
      "PO-2026-1007 found on the invoice",
-     "Prices match the PO",
      "Quantities are within what is left on the order",
      "Every line is on the PO",
      "GST at 12% is calculated correctly",
@@ -986,7 +984,9 @@
      "Not a duplicate",
      "Invoice date is valid"
     ],
-    "attention": [],
+    "attention": [
+     "5 small lines are priced above the PO. Each is only a few rupees over, but together they are \u20b9245 (122.5%) over."
+    ],
     "explanation_mode": null
    }
   ],
@@ -1003,9 +1003,9 @@
    "route_for_review"
   ],
   "severity_if_wrong": "medium",
-  "verdict": "LOOPHOLE",
-  "actual": "APPROVE [-] | APPROVE [-]",
-  "seconds": 6.4,
+  "verdict": "OK",
+  "actual": "APPROVE [-] | REVIEW [R15]",
+  "seconds": 11.7,
   "results": [
    {
     "file": "A13_split_a.pdf",
@@ -1043,12 +1043,16 @@
     "file": "A13_split_b.pdf",
     "status": "completed",
     "error": null,
-    "outcome": "auto_approve",
-    "driving": [],
-    "headline": "Approved: everything checks out and it is safe to pay.",
-    "exposure_paise": 0,
-    "assigned_to": null,
-    "flagged": {},
+    "outcome": "route_for_review",
+    "driving": [
+     "R15"
+    ],
+    "headline": "Review needed: together with another invoice on the same PO this week, this needs a manager.",
+    "exposure_paise": 84370000,
+    "assigned_to": "manager",
+    "flagged": {
+     "R15": "review: This invoice is \u20b98,43,700, but with invoice BLS/26-27/0621 from the same vendor on the same PO this week the total is \u20b915,34,000, above the \u20b910,00,000 manager sign-off limit."
+    },
     "invoice_no": "BLS/26-27/0622",
     "total_paise": 84370000,
     "vendor_id": "V-101",
@@ -1068,7 +1072,9 @@
      "Not a duplicate",
      "Invoice date is valid"
     ],
-    "attention": [],
+    "attention": [
+     "This invoice is \u20b98,43,700, but with invoice BLS/26-27/0621 from the same vendor on the same PO this week the total is \u20b915,34,000, above the \u20b910,00,000 manager sign-off limit."
+    ],
     "explanation_mode": null
    }
   ],
@@ -1088,7 +1094,7 @@
   "severity_if_wrong": "medium",
   "verdict": "OK",
   "actual": "REVIEW [R15]",
-  "seconds": 4.4,
+  "seconds": 9.4,
   "results": [
    {
     "file": "K13_single.pdf",
@@ -1142,9 +1148,9 @@
    "route_for_review"
   ],
   "severity_if_wrong": "medium",
-  "verdict": "LOOPHOLE",
-  "actual": "APPROVE+NOTE [R07] | APPROVE+NOTE [R07]",
-  "seconds": 6.0,
+  "verdict": "OK",
+  "actual": "APPROVE+NOTE [R07] | REVIEW [R07]",
+  "seconds": 12.2,
   "results": [
    {
     "file": "A14_split_a.pdf",
@@ -1187,15 +1193,15 @@
     "file": "A14_split_b.pdf",
     "status": "completed",
     "error": null,
-    "outcome": "approve_with_note",
+    "outcome": "route_for_review",
     "driving": [
      "R07"
     ],
-    "headline": "Approved with a note: we matched this invoice to a purchase order that the vendor did not mention.",
-    "exposure_paise": 0,
-    "assigned_to": null,
+    "headline": "Review needed: the PO was inferred and, together with another invoice, the amount is too large to approve on an inferred PO.",
+    "exposure_paise": 5115600,
+    "assigned_to": "manager",
     "flagged": {
-     "R07": "note: No PO number on the invoice. PO-2026-1005 is the best match at 100%; the other open order scores 10%."
+     "R07": "review: No PO number on the invoice. PO-2026-1005 matches at 100%, but with invoice GL-2401 on the same inferred PO this week the total is \u20b91,02,816, above the \u20b91,00,000 limit for an inferred PO."
     },
     "invoice_no": "GL-2402",
     "total_paise": 5115600,
@@ -1216,7 +1222,7 @@
      "Invoice date is valid"
     ],
     "attention": [
-     "The PO number was missing. PO-2026-1005 is the only open order that matches these items and prices (100% match; the other open order scores 10%)."
+     "No PO number on the invoice. PO-2026-1005 matches at 100%, but with invoice GL-2401 on the same inferred PO this week the total is \u20b91,02,816, above the \u20b91,00,000 limit for an inferred PO."
     ],
     "explanation_mode": null
    }
@@ -1238,7 +1244,7 @@
   "severity_if_wrong": "high",
   "verdict": "OK",
   "actual": "APPROVE [-] | REVIEW [R06]",
-  "seconds": 6.0,
+  "seconds": 12.5,
   "results": [
    {
     "file": "A15_original.pdf",
@@ -1326,20 +1332,24 @@
    "hold_request_info"
   ],
   "severity_if_wrong": "medium",
-  "verdict": "LOOPHOLE",
-  "actual": "APPROVE [-]",
-  "seconds": 4.6,
+  "verdict": "OK",
+  "actual": "REVIEW [R04]",
+  "seconds": 9.2,
   "results": [
    {
     "file": "A16_no_gstin.pdf",
     "status": "completed",
     "error": null,
-    "outcome": "auto_approve",
-    "driving": [],
-    "headline": "Approved: everything checks out and it is safe to pay.",
-    "exposure_paise": 0,
-    "assigned_to": null,
-    "flagged": {},
+    "outcome": "route_for_review",
+    "driving": [
+     "R04"
+    ],
+    "headline": "Review needed: the invoice does not show Brightline's GSTIN, so the vendor and the GST credit are unconfirmed.",
+    "exposure_paise": 3835000,
+    "assigned_to": "manager",
+    "flagged": {
+     "R04": "review: The invoice charges GST but does not show Brightline Office Supplies Pvt Ltd's GSTIN (27AAFCB4821K1Z3 on file). We matched the vendor by name only."
+    },
     "invoice_no": "BLS/26-27/0631",
     "total_paise": 3835000,
     "vendor_id": "V-101",
@@ -1348,7 +1358,6 @@
     "r05": "Bank account ending 8901 on the invoice matches the account on file.",
     "r10": "Price per chair \u20b96,500.00 matches the PO.",
     "ok": [
-     "Vendor approved (matched by name)",
      "PO-2026-1001 found on the invoice",
      "Price per chair matches (\u20b96,500)",
      "Quantities are within what is left on the order",
@@ -1359,7 +1368,9 @@
      "Not a duplicate",
      "Invoice date is valid"
     ],
-    "attention": [],
+    "attention": [
+     "The invoice charges GST but does not show Brightline Office Supplies Pvt Ltd's GSTIN (27AAFCB4821K1Z3 on file). We matched the vendor by name only."
+    ],
     "explanation_mode": null
    }
   ],
@@ -1377,23 +1388,23 @@
    "hold_request_info"
   ],
   "severity_if_wrong": "medium",
-  "verdict": "LOOPHOLE",
-  "actual": "APPROVE+NOTE [R07]",
-  "seconds": 4.8,
+  "verdict": "OK",
+  "actual": "REVIEW [R07]",
+  "seconds": 9.2,
   "results": [
    {
     "file": "A17_bad_po.pdf",
     "status": "completed",
     "error": null,
-    "outcome": "approve_with_note",
+    "outcome": "route_for_review",
     "driving": [
      "R07"
     ],
-    "headline": "Approved with a note: we matched this invoice to a purchase order that the vendor did not mention.",
-    "exposure_paise": 0,
-    "assigned_to": null,
+    "headline": "Review needed: the invoice quotes PO-2026-1099, a purchase order we do not have.",
+    "exposure_paise": 5166000,
+    "assigned_to": "manager",
     "flagged": {
-     "R07": "note: No PO number on the invoice. PO-2026-1005 is the best match at 100%; the other open order scores 10%."
+     "R07": "review: The invoice quotes PO-2026-1099, which we do not have. Its items match PO-2026-1005 at 100%."
     },
     "invoice_no": "GL-2410",
     "total_paise": 5166000,
@@ -1414,7 +1425,7 @@
      "Invoice date is valid"
     ],
     "attention": [
-     "The PO number was missing. PO-2026-1005 is the only open order that matches these items and prices (100% match; the other open order scores 10%)."
+     "The invoice quotes PO-2026-1099, which we do not have. Its items match PO-2026-1005 at 100%."
     ],
     "explanation_mode": null
    }
@@ -1434,20 +1445,24 @@
    "reject"
   ],
   "severity_if_wrong": "medium",
-  "verdict": "LOOPHOLE",
-  "actual": "APPROVE [-]",
-  "seconds": 5.2,
+  "verdict": "OK",
+  "actual": "REVIEW [R16]",
+  "seconds": 9.3,
   "results": [
    {
     "file": "A18_usd.pdf",
     "status": "completed",
     "error": null,
-    "outcome": "auto_approve",
-    "driving": [],
-    "headline": "Approved: everything checks out and it is safe to pay.",
-    "exposure_paise": 0,
-    "assigned_to": null,
-    "flagged": {},
+    "outcome": "route_for_review",
+    "driving": [
+     "R16"
+    ],
+    "headline": "Review needed: the invoice is in a different currency from the PO.",
+    "exposure_paise": 8496000,
+    "assigned_to": "manager",
+    "flagged": {
+     "R16": "review: Invoice currency USD differs from the PO currency INR."
+    },
     "invoice_no": "CV-9150",
     "total_paise": 8496000,
     "vendor_id": "V-102",
@@ -1467,7 +1482,9 @@
      "Not a duplicate",
      "Invoice date is valid"
     ],
-    "attention": [],
+    "attention": [
+     "Invoice currency USD differs from the PO currency INR."
+    ],
     "explanation_mode": null
    }
   ],
@@ -1485,23 +1502,23 @@
    "approve_with_note"
   ],
   "severity_if_wrong": "medium",
-  "verdict": "LOOPHOLE",
-  "actual": "REJECT [R14]",
-  "seconds": 5.6,
+  "verdict": "OK",
+  "actual": "APPROVE+NOTE [R14]",
+  "seconds": 9.2,
   "results": [
    {
     "file": "B01_freight.pdf",
     "status": "completed",
     "error": null,
-    "outcome": "reject",
+    "outcome": "approve_with_note",
     "driving": [
      "R14"
     ],
-    "headline": "Reject: the invoice total does not add up.",
-    "exposure_paise": 150000,
-    "assigned_to": "clerk",
+    "headline": "Approved with a note: the invoice adds \u20b91,500 of charges such as freight that are not on the PO.",
+    "exposure_paise": 0,
+    "assigned_to": null,
     "flagged": {
-     "R14": "reject: Subtotal \u20b965,000 plus tax \u20b911,700 is \u20b976,700, but the invoice total is \u20b978,200: off by \u20b91,500."
+     "R14": "note: The total adds up, including \u20b91,500 of charges that are not on the PO (Freight charges  1,500.00)."
     },
     "invoice_no": "BLS/26-27/0641",
     "total_paise": 7820000,
@@ -1522,7 +1539,7 @@
      "Invoice date is valid"
     ],
     "attention": [
-     "Subtotal \u20b965,000 plus tax \u20b911,700 is \u20b976,700, but the invoice total is \u20b978,200: off by \u20b91,500."
+     "The total adds up, including \u20b91,500 of charges that are not on the PO (Freight charges  1,500.00)."
     ],
     "explanation_mode": null
    }
@@ -1542,7 +1559,7 @@
   "severity_if_wrong": "high",
   "verdict": "OK",
   "actual": "APPROVE [-]",
-  "seconds": 5.5,
+  "seconds": 9.3,
   "results": [
    {
     "file": "B02_two_pages.pdf",
@@ -1591,24 +1608,20 @@
    "approve_with_note"
   ],
   "severity_if_wrong": "low",
-  "verdict": "LOOPHOLE",
-  "actual": "HOLD [R01]",
-  "seconds": 5.4,
+  "verdict": "OK",
+  "actual": "APPROVE [-]",
+  "seconds": 9.2,
   "results": [
    {
     "file": "B03_no_currency.pdf",
     "status": "completed",
     "error": null,
-    "outcome": "hold_request_info",
-    "driving": [
-     "R01"
-    ],
-    "headline": "Hold: the invoice is missing the currency.",
-    "exposure_paise": 7670000,
-    "assigned_to": "clerk",
-    "flagged": {
-     "R01": "hold: The invoice is missing: currency."
-    },
+    "outcome": "auto_approve",
+    "driving": [],
+    "headline": "Approved: everything checks out and it is safe to pay.",
+    "exposure_paise": 0,
+    "assigned_to": null,
+    "flagged": {},
     "invoice_no": "BLS/26-27/0651",
     "total_paise": 7670000,
     "vendor_id": "V-101",
@@ -1628,9 +1641,7 @@
      "Not a duplicate",
      "Invoice date is valid"
     ],
-    "attention": [
-     "The invoice is missing: currency."
-    ],
+    "attention": [],
     "explanation_mode": null
    }
   ],
@@ -1649,25 +1660,20 @@
    "route_for_review"
   ],
   "severity_if_wrong": "medium",
-  "verdict": "LOOPHOLE",
-  "actual": "REJECT [R13]",
-  "seconds": 5.1,
+  "verdict": "OK",
+  "actual": "APPROVE [-]",
+  "seconds": 9.2,
   "results": [
    {
     "file": "B04_return_line.pdf",
     "status": "completed",
     "error": null,
-    "outcome": "reject",
-    "driving": [
-     "R13"
-    ],
-    "headline": "Reject: the GST on this invoice is wrong and the vendor must send a corrected one.",
-    "exposure_paise": 468000,
-    "assigned_to": "clerk",
-    "flagged": {
-     "R13": "reject: GST shown is \u20b99,360 but 18% of \u20b978,000 is \u20b914,040. Off by \u20b94,680. Allowed: up to \u20b91.",
-     "R14": "review: The line items we read add up to \u20b978,000, but the subtotal is \u20b952,000. \u20b926,000 is not on any line we could check against the PO."
-    },
+    "outcome": "auto_approve",
+    "driving": [],
+    "headline": "Approved: everything checks out and it is safe to pay.",
+    "exposure_paise": 0,
+    "assigned_to": null,
+    "flagged": {},
     "invoice_no": "BLS/26-27/0661",
     "total_paise": 6136000,
     "vendor_id": "V-101",
@@ -1681,14 +1687,13 @@
      "Prices match the PO",
      "Quantities are within what is left on the order",
      "Every line is on the PO",
+     "GST at 18% is calculated correctly",
+     "Total adds up",
      "Bank account matches the one on file",
      "Not a duplicate",
      "Invoice date is valid"
     ],
-    "attention": [
-     "GST should be \u20b914,040 (18% of \u20b978,000) but the invoice shows \u20b99,360, which is \u20b94,680 too low. The total on the invoice is consistent with the wrong tax, so the error is in the tax line. GST amounts must be right for input credit.",
-     "The line items we read add up to \u20b978,000, but the subtotal is \u20b952,000. \u20b926,000 is not on any line we could check against the PO."
-    ],
+    "attention": [],
     "explanation_mode": null
    }
   ],
@@ -1706,25 +1711,21 @@
    "approve_with_note"
   ],
   "severity_if_wrong": "low",
-  "verdict": "LOOPHOLE",
-  "actual": "HOLD [R01]",
-  "seconds": 5.2,
+  "verdict": "OK",
+  "actual": "APPROVE [-]",
+  "seconds": 9.1,
   "results": [
    {
     "file": "B07_lowercase_no.pdf",
     "status": "completed",
     "error": null,
-    "outcome": "hold_request_info",
-    "driving": [
-     "R01"
-    ],
-    "headline": "Hold: the invoice is missing the invoice number.",
-    "exposure_paise": 7670000,
-    "assigned_to": "clerk",
-    "flagged": {
-     "R01": "hold: The invoice is missing: invoice number."
-    },
-    "invoice_no": null,
+    "outcome": "auto_approve",
+    "driving": [],
+    "headline": "Approved: everything checks out and it is safe to pay.",
+    "exposure_paise": 0,
+    "assigned_to": null,
+    "flagged": {},
+    "invoice_no": "bls/26-27/0675",
     "total_paise": 7670000,
     "vendor_id": "V-101",
     "po_id": "PO-2026-1001",
@@ -1743,9 +1744,7 @@
      "Not a duplicate",
      "Invoice date is valid"
     ],
-    "attention": [
-     "The invoice is missing: invoice number."
-    ],
+    "attention": [],
     "explanation_mode": null
    }
   ],
@@ -1764,7 +1763,7 @@
   "severity_if_wrong": "low",
   "verdict": "OK",
   "actual": "APPROVE [-]",
-  "seconds": 5.1,
+  "seconds": 9.4,
   "results": [
    {
     "file": "B05_owner_locked.pdf",
@@ -1813,26 +1812,30 @@
    "auto_approve"
   ],
   "severity_if_wrong": "low",
-  "verdict": "WEAK",
-  "actual": "APPROVE [-]  (notice says the bank changed from 1 Nov 2026, R05 calls the old on-file account 'new' and cites a 2025 verification)",
-  "seconds": 4.3,
+  "verdict": "OK",
+  "actual": "HOLD [R05]",
+  "seconds": 9.2,
   "results": [
    {
     "file": "B06_notice_same_acct.pdf",
     "status": "completed",
     "error": null,
-    "outcome": "auto_approve",
-    "driving": [],
-    "headline": "Approved: everything checks out and it is safe to pay.",
-    "exposure_paise": 0,
-    "assigned_to": null,
-    "flagged": {},
+    "outcome": "hold_request_info",
+    "driving": [
+     "R05"
+    ],
+    "headline": "Hold: the vendor says its bank details changed, but we have no verified new account.",
+    "exposure_paise": 1792000,
+    "assigned_to": "manager",
+    "flagged": {
+     "R05": "hold: The invoice says Greenleaf's bank details have changed, but the account it prints (ending 5508) is the one we already have. Our record was last verified on 30 Sep 2025, before that notice."
+    },
     "invoice_no": "GL-2420",
     "total_paise": 1792000,
     "vendor_id": "V-104",
     "po_id": "PO-2026-1007",
     "po_method": "explicit",
-    "r05": "The invoice mentions a bank change. The new account ending 5508 matches the vendor record, which Rahul Mehta verified on 30 Sep 2025.",
+    "r05": "The invoice says Greenleaf's bank details have changed, but the account it prints (ending 5508) is the one we already have. Our record was last verified on 30 Sep 2025, before that notice.",
     "r10": "Price per cup \u20b91.60 matches the PO.",
     "ok": [
      "Vendor approved (matched by GSTIN 27AAJFG9054R1Z2)",
@@ -1842,11 +1845,12 @@
      "Every line is on the PO",
      "GST at 12% is calculated correctly",
      "Total adds up",
-     "Bank account matches the verified record on file",
      "Not a duplicate",
      "Invoice date is valid"
     ],
-    "attention": [],
+    "attention": [
+     "The invoice says Greenleaf's bank details have changed, but the account it prints (ending 5508) is the one we already have. Our record was last verified on 30 Sep 2025, before that notice."
+    ],
     "explanation_mode": null
    }
   ],
@@ -1867,7 +1871,7 @@
   "severity_if_wrong": "high",
   "verdict": "OK",
   "actual": "REVIEW [R04]",
-  "seconds": 4.4,
+  "seconds": 9.2,
   "results": [
    {
     "file": "K02_other_gstin.pdf",
@@ -1924,7 +1928,7 @@
   "severity_if_wrong": "high",
   "verdict": "OK",
   "actual": "REVIEW [R04]",
-  "seconds": 4.3,
+  "seconds": 9.2,
   "results": [
    {
     "file": "K03_homoglyph.pdf",
@@ -1980,7 +1984,7 @@
   "severity_if_wrong": "high",
   "verdict": "OK",
   "actual": "HOLD [R05]",
-  "seconds": 4.4,
+  "seconds": 9.3,
   "results": [
    {
     "file": "K04_lookalike.pdf",
@@ -2035,8 +2039,8 @@
   ],
   "severity_if_wrong": "high",
   "verdict": "OK",
-  "actual": "REJECT [R04]",
-  "seconds": 4.2,
+  "actual": "REJECT [R04,R14]",
+  "seconds": 9.3,
   "results": [
    {
     "file": "K05_blocked.pdf",
@@ -2044,13 +2048,15 @@
     "error": null,
     "outcome": "reject",
     "driving": [
-     "R04"
+     "R04",
+     "R14"
     ],
     "headline": "Reject: Meridian is a blocked vendor.",
     "exposure_paise": 3422000,
     "assigned_to": "manager",
     "flagged": {
-     "R04": "reject: Meridian Logistics Pvt Ltd is blocked in the vendor master."
+     "R04": "reject: Meridian Logistics Pvt Ltd is blocked in the vendor master.",
+     "R14": "reject: Subtotal \u20b929,000 plus tax \u20b95,220 is \u20b963,220, but the invoice total is \u20b934,220: off by \u20b929,000."
     },
     "invoice_no": "MX-5601",
     "total_paise": 3422000,
@@ -2065,13 +2071,13 @@
      "Quantities are within what is left on the order",
      "Every line is on the PO",
      "GST at 18% is calculated correctly",
-     "Total adds up",
      "Bank account matches the one on file",
      "Not a duplicate",
      "Invoice date is valid"
     ],
     "attention": [
-     "Meridian Logistics Pvt Ltd is blocked in the vendor master."
+     "Meridian Logistics Pvt Ltd is blocked in the vendor master.",
+     "Subtotal \u20b929,000 plus tax \u20b95,220 is \u20b963,220, but the invoice total is \u20b934,220: off by \u20b929,000."
     ],
     "explanation_mode": null
    }
@@ -2092,7 +2098,7 @@
   "severity_if_wrong": "high",
   "verdict": "OK",
   "actual": "HOLD [R04,R07]",
-  "seconds": 4.3,
+  "seconds": 8.9,
   "results": [
    {
     "file": "K06_pending_vendor.pdf",
@@ -2147,7 +2153,7 @@
   "severity_if_wrong": "high",
   "verdict": "OK",
   "actual": "REJECT [R08]",
-  "seconds": 4.4,
+  "seconds": 9.4,
   "results": [
    {
     "file": "K07_closed_po.pdf",
@@ -2208,7 +2214,7 @@
   "severity_if_wrong": "high",
   "verdict": "OK",
   "actual": "REVIEW [R07]",
-  "seconds": 4.3,
+  "seconds": 9.0,
   "results": [
    {
     "file": "K08_other_vendor_po.pdf",
@@ -2263,7 +2269,7 @@
   "severity_if_wrong": "medium",
   "verdict": "OK",
   "actual": "HOLD [R03]",
-  "seconds": 4.2,
+  "seconds": 9.1,
   "results": [
    {
     "file": "K09_future.pdf",
@@ -2320,7 +2326,7 @@
   "severity_if_wrong": "low",
   "verdict": "OK",
   "actual": "APPROVE+NOTE [R02]",
-  "seconds": 4.4,
+  "seconds": 9.0,
   "results": [
    {
     "file": "K10_ambiguous_date.pdf",
@@ -2330,7 +2336,7 @@
     "driving": [
      "R02"
     ],
-    "headline": "Approved with a note: some fields were hard to read, but the numbers check out.",
+    "headline": "Approved with a note: the invoice date could be read two ways; we used the reading that is not in the future.",
     "exposure_paise": 0,
     "assigned_to": null,
     "flagged": {
@@ -2378,7 +2384,7 @@
   "severity_if_wrong": "medium",
   "verdict": "OK",
   "actual": "REVIEW [R08,R03]",
-  "seconds": 4.3,
+  "seconds": 9.2,
   "results": [
    {
     "file": "K11_old.pdf",
@@ -2436,7 +2442,7 @@
   "severity_if_wrong": "critical",
   "verdict": "OK",
   "actual": "APPROVE [-] | REJECT [R06]",
-  "seconds": 5.5,
+  "seconds": 11.6,
   "results": [
    {
     "file": "K12_original.pdf",
@@ -2525,7 +2531,7 @@
   "severity_if_wrong": "critical",
   "verdict": "OK",
   "actual": "REJECT [R10]",
-  "seconds": 4.4,
+  "seconds": 9.1,
   "results": [
    {
     "file": "K14_injection_text.pdf",
@@ -2581,7 +2587,7 @@
   "severity_if_wrong": "high",
   "verdict": "OK",
   "actual": "HOLD [R01]",
-  "seconds": 4.4,
+  "seconds": 8.8,
   "results": [
    {
     "file": "K15_statement.pdf",
@@ -2630,7 +2636,7 @@
   "severity_if_wrong": "low",
   "verdict": "OK",
   "actual": "REVIEW [R10]",
-  "seconds": 5.1,
+  "seconds": 9.1,
   "results": [
    {
     "file": "K16_zero.pdf",
@@ -2689,7 +2695,7 @@
   "severity_if_wrong": "low",
   "verdict": "OK",
   "actual": "REVIEW [R09]",
-  "seconds": 5.2,
+  "seconds": 9.2,
   "results": [
    {
     "file": "K17_long.pdf",
@@ -2744,7 +2750,7 @@
   "severity_if_wrong": "low",
   "verdict": "OK",
   "actual": "upload rejected: This PDF has 11 pages; the limit is 10.",
-  "seconds": 4.0,
+  "seconds": 6.6,
   "upload_status": 400,
   "rejected": [
    {
@@ -2769,7 +2775,7 @@
   "severity_if_wrong": "low",
   "verdict": "OK",
   "actual": "upload rejected: File is larger than 10 MB.",
-  "seconds": 3.7,
+  "seconds": 6.7,
   "upload_status": 400,
   "rejected": [
    {
@@ -2794,7 +2800,7 @@
   "severity_if_wrong": "low",
   "verdict": "OK",
   "actual": "upload rejected: This file could not be opened as a PDF. Ask the sender for a readable copy.",
-  "seconds": 3.8,
+  "seconds": 6.8,
   "upload_status": 400,
   "rejected": [
    {
@@ -2819,7 +2825,7 @@
   "severity_if_wrong": "low",
   "verdict": "OK",
   "actual": "upload rejected: Only PDF files are supported.",
-  "seconds": 3.9,
+  "seconds": 6.7,
   "upload_status": 400,
   "rejected": [
    {
@@ -2844,7 +2850,7 @@
   "severity_if_wrong": "low",
   "verdict": "OK",
   "actual": "upload rejected: This PDF is password protected. Ask the sender for an unlocked copy.",
-  "seconds": 4.0,
+  "seconds": 6.9,
   "upload_status": 400,
   "rejected": [
    {

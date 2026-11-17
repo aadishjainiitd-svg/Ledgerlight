@@ -240,6 +240,7 @@ def normalise(extraction: dict, *, text_layer: str, scanned_no_text: bool, cfg: 
         "tax_lines": extraction.get("tax_lines") or [],
         "other_charges_paise": parse_money(extraction.get("other_charges")) or 0,
         "discount_paise": parse_money(extraction.get("discount")) or 0,
+        "other_charge_labels": list(extraction.get("other_charge_labels") or []),
         "bank": {"name": fields["bank_name"]["value"], "account": fields["bank_account"]["value"],
                  "ifsc": (str(fields["bank_ifsc"]["value"]).upper() if fields["bank_ifsc"]["value"] else None)},
         "bank_entries": list(extraction.get("bank_entries") or []),

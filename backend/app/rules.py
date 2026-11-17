@@ -162,7 +162,8 @@ def r02(ctx) -> dict:
     if low >= p["min"]:
         msg = f"Lowest confidence is the {low_label.lower()} at {low:.2f}{why}.{(' ' + boost_txt) if boost_txt else ''}"
         return rr("R02", "note", msg, facts=facts, threshold=thr,
-                  headline="some fields were hard to read, but the numbers check out.",
+                  headline=("the invoice date could be read two ways; we used the reading that is not in the future."
+                            if why else "some fields were hard to read, but the numbers check out."),
                   next_step="None needed. You can correct any field if you disagree and the invoice will be re-checked.")
     return rr("R02", "hold", f"We could not read the {low_label.lower()} with confidence ({low:.2f}, needs "
                              f"{p['min']:.2f}).", facts=facts, threshold=thr, exposure=ctx["canon"].get("total_paise") or 0,
@@ -231,6 +232,12 @@ def r04(ctx) -> dict:
         return rr("R04", "review", f"Looks like {v['name']} (name match {vm['score']:.2f}), but {why}. Please confirm.",
                   facts=facts, exposure=total, headline=f"the vendor looks like {short} but we could not confirm it.",
                   next_step="Confirm the vendor with Procurement, then accept or override.")
+    if not c.get("vendor_gstin") and (c.get("tax_paise") or 0) > 0 and v.get("gstin"):
+        return rr("R04", "review", f"The invoice charges GST but does not show {v['name']}'s GSTIN "
+                                   f"({v['gstin']} on file). We matched the vendor by name only.", facts=facts,
+                  exposure=total, headline=f"the invoice does not show {short}'s GSTIN, so the vendor and the GST "
+                                           f"credit are unconfirmed.",
+                  next_step=f"Ask {short} for a corrected tax invoice that shows its GSTIN, then re-run it.")
     mis = vm.get("gstin_misread")
     if mis:
         facts["gstin_misread"] = mis
@@ -285,6 +292,15 @@ def r05(ctx) -> dict:
                   ok="Bank account matches the verified record on file")
     notice = " The invoice also says the bank details have changed." if c.get("bank_change_notice") else ""
     short = (v.get("short") or v["name"]) if v else "the vendor"
+    if b["status"] == "notice_only":
+        when = (f" Our record was last verified on {fmt_date(v.get('bank_changed_at'))}, before that notice."
+                if v and v.get("bank_changed_at") else "")
+        return rr("R05", "hold", f"The invoice says {short}'s bank details have changed, but the account it prints "
+                                 f"({mask_account(inv_b.get('account'))}) is the one we already have.{when}",
+                  facts=facts, exposure=total,
+                  headline="the vendor says its bank details changed, but we have no verified new account.",
+                  next_step=f"Call {short} on the phone number in our vendor file (not the one on the invoice) and ask "
+                            f"whether the account changed before paying.")
     msg = (f"The invoice asks us to pay {inv_b.get('name') or 'a different bank'} (account "
            f"{mask_account(inv_b.get('account'))}). We have {v.get('bank_name')} (account "
            f"{mask_account(v.get('bank_account_no'))}).{notice}")
@@ -384,12 +400,30 @@ def r07(ctx) -> dict:
         return rr("R07", "review", f"{po['id']} belongs to a different vendor ({po['vendor_id']}).", facts=facts,
                   threshold=thr, exposure=total, headline="the PO on the invoice belongs to a different vendor.",
                   next_step="Ask Procurement which PO was meant.")
+    if res["method"] == "implied" and res.get("reference_not_found"):
+        po, ref = res["po"]["id"], res["reference_not_found"]
+        return rr("R07", "review", f"The invoice quotes {ref}, which we do not have. Its items match {po} at "
+                                   f"{res['score'] * 100:.0f}%.", facts=facts, threshold=thr, exposure=total,
+                  headline=f"the invoice quotes {ref}, a purchase order we do not have.",
+                  next_step=f"Ask {short} which order this is for, or confirm with Procurement that {po} is meant.")
     if res["method"] == "implied":
         po = res["po"]["id"]
         sc, ru, gap = res["score"], res["runner_up"], res["gap"]
         other = (f"; the other open order scores {ru * 100:.0f}%" if res.get("runner_up_po") else "")
         if sc >= p["score"] and gap >= p["gap"] - 1e-9:
             ceil_paise = int(p["ceil"] * 100)
+            sib = ctx.get("siblings") or []
+            together = total + sum(s["total_paise"] for s in sib)
+            if total <= ceil_paise < together:
+                names = ", ".join(s["invoice_no"] for s in sib)
+                facts.update({"siblings": sib, "together_paise": together})
+                return rr("R07", "review", f"No PO number on the invoice. {po} matches at {sc * 100:.0f}%, but with "
+                                           f"invoice {names} on the same inferred PO this week the total is "
+                                           f"{inr0(together)}, above the {inr0(ceil_paise)} limit for an inferred PO.",
+                          facts=facts, threshold=thr, exposure=total,
+                          headline="the PO was inferred and, together with another invoice, the amount is too large to "
+                                   "approve on an inferred PO.",
+                          next_step=f"Confirm with Procurement that {po} is the right order for both invoices.")
             if total <= ceil_paise:
                 msg = f"No PO number on the invoice. {po} is the best match at {sc * 100:.0f}%{other}."
                 att = (f"The PO number was missing. {po} is the only open order that matches these items and prices "
@@ -538,7 +572,10 @@ def r10(ctx) -> dict:
                      "invoice_unit_paise": int(round(inv_unit)), "delta_paise": delta, "delta_pct": round(pct, 3),
                      "severity": sev, "band": bname, "qty": q,
                      "noun": unit_noun(pls[0]["description"] if len(pls) == 1 else "set",
-                                       (pls[0].get("uom") or l.get("uom")) if len(pls) == 1 else "sets", 1)})
+                                       (pls[0].get("uom") or l.get("uom")) if len(pls) == 1 else "sets", 1),
+                     "over_from": list(pls[0].get("over_from") or []) if len(pls) == 1 else [],
+                     "over_before_paise": int(pls[0].get("over_billed_paise") or 0) if len(pls) == 1 else 0,
+                     "tax_rate": rate})
         if SEV_RANK[sev] > SEV_RANK[worst]:
             worst = sev
     if not rows:
@@ -546,6 +583,39 @@ def r10(ctx) -> dict:
     facts = {"lines": rows}
     thr = {**p, "allowed": allowed_text("R10", ctx["cfg"])}
     allowed = f"Allowed: up to {p['note_pct']:g}% and {inr0(int(p['note_abs'] * 100))}."
+    # Repeated small overcharges on the same PO line (each one inside the "note" band) go to a person.
+    repeat = [r for r in rows if r["severity"] == "note" and r["delta_paise"] > 0 and r["over_from"]]
+    if repeat and SEV_RANK[worst] <= SEV_RANK["note"]:
+        r = repeat[0]
+        together = r["over_before_paise"] + r["delta_paise"]
+        who = ", ".join(r["over_from"])
+        facts["repeat_overcharge"] = {"line_no": r["line_no"], "earlier_invoices": r["over_from"],
+                                      "together_paise": together}
+        return rr("R10", "review", f"Price per {r['noun']} is {inr(r['invoice_unit_paise'])} against "
+                                   f"{inr(r['po_unit_paise'])} on the PO ({pct_str(r['delta_pct'])} above). Invoice {who} "
+                                   f"on the same PO line was also billed above the PO price: together {inr0(together)} "
+                                   f"over.", facts=facts, threshold=thr,
+                  exposure=int(round(together * (1 + r["tax_rate"]))),
+                  headline="the vendor keeps billing slightly above the PO price on the same line.",
+                  next_step="Ask Procurement whether the price changed. If not, ask the vendor for a credit note for "
+                            "the overcharge on all the invoices.")
+    # The ₹ floor that makes a tiny difference "exact enough" applies to the whole invoice, not to each line:
+    # five lines each ₹49 over a ₹40 price are not five rounding differences.
+    small = [r for r in rows if r["band"] == "exact enough" and r["delta_paise"] > 0 and r["delta_pct"] > p["pass_pct"]]
+    agg = sum(r["delta_paise"] for r in small)
+    if worst == "pass" and small and agg > (p.get("pass_abs") or 0) * 100:
+        base = sum(int(round(r["qty"] * r["po_unit_paise"])) for r in small) or 1
+        apct = 100.0 * agg / base
+        sev, _ = band(agg, apct, {**p, "pass_abs": 0})
+        sev = "review" if SEV_RANK[sev] > SEV_RANK["review"] else sev
+        if sev != "pass":
+            facts["small_lines_over_paise"] = agg
+            return rr("R10", sev, f"{len(small)} small lines are priced above the PO. Each is only a few rupees over, but "
+                                  f"together they are {inr0(agg)} ({pct_str(apct)}) over.", facts=facts, threshold=thr,
+                      exposure=agg if sev == "review" else 0,
+                      headline="several small lines are priced well above the purchase order.",
+                      next_step=("None needed. The difference is noted." if sev == "note" else
+                                 "Ask Procurement to confirm the prices, then accept or override."))
     if worst == "pass":
         if len(rows) == 1:
             r = rows[0]
@@ -805,6 +875,26 @@ def r14(ctx) -> dict:
         return skip("R14", "nothing was extracted")
     c = ctx["canon"]
     p = ctx["cfg"]["rules"]["R14"]
+    # The invoice's own arithmetic: printed quantity x printed rate must equal the printed line amount.
+    for l in c.get("lines") or []:
+        q, unit, amt = l.get("qty"), l.get("unit_price_paise"), l.get("amount_paise")
+        if l.get("calculated") or not q or not unit or amt is None:
+            continue
+        calc = int(round(q * unit))
+        off = amt - calc
+        if abs(off) > max(100, 0.0005 * abs(amt)):
+            sure = (l.get("confidence") or 0) >= 0.85
+            facts = {"line_no": l["line_no"], "qty": q, "unit_price_paise": unit, "printed_amount_paise": amt,
+                     "calculated_paise": calc, "difference_paise": off}
+            msg = (f"Line {l['line_no']}: {fmt_qty(q)} x {inr(unit)} is {inr(calc)}, but the invoice says {inr(amt)} "
+                   f"({inr(abs(off))} {'more' if off > 0 else 'less'}).")
+            if sure:
+                return rr("R14", "reject", msg, facts=facts, exposure=max(0, off),
+                          headline="the invoice's own line arithmetic is wrong.",
+                          next_step="Send the return notice and ask the vendor for a corrected invoice.")
+            return rr("R14", "hold", msg + " Some values were hard to read, so we may have misread them.", facts=facts,
+                      exposure=max(0, off), headline="a line's arithmetic does not add up, so we need to re-check it.",
+                      next_step="Check the line against the document and correct it, or ask the vendor.")
     sub, tax, total = c.get("subtotal_paise"), c.get("tax_printed_paise"), c.get("total_paise")
     if sub is None or tax is None or total is None:
         return skip("R14", "subtotal, tax or total missing")
@@ -831,6 +921,19 @@ def r14(ctx) -> dict:
                       headline=f"{inr0(abs(sub - line_sum))} of the subtotal is not on any line we could check.",
                       next_step="Find the extra charge on the invoice and confirm it was agreed, then accept or "
                                 "override.")
+    other = c.get("other_charges_paise") or 0
+    if diff <= p["note"] * 100 and other > 100:
+        # Freight, packing etc. make the total add up, but they are not on the PO: small amounts get a note, larger
+        # ones a person (the same ₹ limit as a price difference that gets a note, R10).
+        labels = "; ".join(c.get("other_charge_labels") or []) or "other charges"
+        cap = int(ctx["cfg"]["rules"]["R10"]["note_abs"] * 100)
+        sev = "note" if other <= cap else "review"
+        return rr("R14", sev, f"The total adds up, including {inr0(other)} of charges that are not on the PO "
+                              f"({labels}).", facts={**facts, "other_labels": c.get("other_charge_labels")},
+                  threshold=thr, exposure=other if sev == "review" else 0,
+                  headline=(f"the invoice adds {inr0(other)} of charges such as freight that are not on the PO."),
+                  next_step=("None needed. The charge is within the allowed difference and is noted." if sev == "note"
+                             else "Confirm the extra charge was agreed with Procurement, then accept or override."))
     if diff <= p["pass"] * 100:
         return rr("R14", "pass", f"Subtotal {inr0(sub)} plus tax {inr0(tax)} equals the stated total {inr0(total)}.",
                   facts=facts, threshold=thr, ok="Total adds up")
@@ -855,6 +958,16 @@ def r15(ctx) -> dict:
     total = ctx["canon"]["total_paise"]
     cap = int(ctx["cfg"]["rules"]["R15"]["cap"] * 100)
     facts = {"total_paise": total, "cap_paise": cap}
+    sib = ctx.get("siblings") or []
+    together = total + sum(s["total_paise"] for s in sib)
+    if total <= cap < together:
+        names = ", ".join(s["invoice_no"] for s in sib)
+        facts.update({"siblings": sib, "together_paise": together})
+        return rr("R15", "review", f"This invoice is {inr0(total)}, but with invoice {names} from the same vendor on the "
+                                   f"same PO this week the total is {inr0(together)}, above the {inr0(cap)} manager "
+                                   f"sign-off limit.", facts=facts, threshold={"cap": cap / 100}, exposure=total,
+                  headline="together with another invoice on the same PO this week, this needs a manager.",
+                  next_step="A manager reviews both invoices together and signs off.")
     if total > cap:
         return rr("R15", "review", f"Total {inr0(total)} is above {inr0(cap)}, so a manager must sign it off.", facts=facts,
                   threshold={"cap": cap / 100}, exposure=total, headline="this is a high-value invoice that needs a manager.",
